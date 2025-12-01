@@ -1,0 +1,13 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Run connectVision preview",
+      "type": "shell",
+      "command": "python",
+      "args": ["-m", "src.connectvision.app", "--config", "configs/default.yaml", "--preview"],
+      "group": "none",
+      "problemMatcher": []
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+[project]
+name = "connectVision"
+version = "0.1.0"
+description = "Raspberry Pi Zero 2 W vision system for counting parts"
+authors = [{ name = "Owner" }]
+requires-python = ">=3.9"
+readme = "README.md"
+
+[tool.connectvision]
+entry = "src.connectvision.app"
