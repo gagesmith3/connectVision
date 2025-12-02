@@ -43,28 +43,26 @@ python3 scripts/mjpeg_server.py
 
 Then open `http://<pi-ip>:8080/` in a browser.
 
-## ROI Selection & Object Detection
+## ROI Selection & Object Detection (Web-Based)
 
-### 1. Select ROI (Region of Interest)
-Use keyboard controls to define the chuck area:
+Run the combined web interface for ROI selection and presence detection:
+
 ```bash
-python3 scripts/roi_selector.py
+python3 scripts/web_roi_presence.py
 ```
-- Arrow keys: move ROI
-- `+`/`-` (or `w`/`s`): adjust width
-- `a`/`d`: adjust height
-- `c`: print current coordinates
-- `q`: save and quit
 
-Copy the final `[x, y, w, h]` values and update `ROI` in `scripts/presence_detector.py`.
+Then open `http://<pi-ip>:8080/` in any browser on your network.
 
-### 2. Detect Object Presence
-Run the presence detector to see if an object is in the ROI:
-```bash
-python3 scripts/presence_detector.py
-```
-- Shows "OBJECT PRESENT" or "EMPTY" based on contour area in ROI
-- `t`/`T`: adjust threshold down/up
-- `q`: quit
+**Features:**
+- **Click and drag** on the video to draw ROI over the chuck
+- **Adjust threshold slider** to tune detection sensitivity
+- **Real-time status:** Green border = OBJECT PRESENT | Red border = EMPTY
+- Input boxes to manually fine-tune ROI coordinates
+- Live area readout to verify detection
 
-Tune the threshold until it reliably detects your part vs. empty chuck.
+**Workflow:**
+1. Start the server on the Pi
+2. Open in browser from your PC/phone
+3. Draw ROI over chuck (or use input boxes)
+4. Adjust threshold until it reliably detects part vs. empty
+5. Note the final ROI values for production use
