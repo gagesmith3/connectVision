@@ -31,6 +31,16 @@ python3 -m pip install -r requirements.txt
 ```
 
 ## Run on the Pi
+
+### Live Camera Feed (for setup & positioning)
+```
+python3 scripts/live_feed.py
+# or
+bash scripts/start_feed.sh
+```
+Shows live camera view with crosshair. Press 'q' or ESC to exit.
+
+### Full Vision System
 - Headless counting:
 ```
 python3 -m src.connectvision.app --config configs/default.yaml
