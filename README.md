@@ -31,3 +31,14 @@ python3 scripts/live_feed.py
   source venv/bin/activate
   python3 scripts/live_feed.py
   ```
+
+## Web Stream (LAN)
+
+Serve MJPEG over HTTP to view from any device on the local network:
+
+```bash
+sudo apt install -y python3-flask
+python3 scripts/mjpeg_server.py
+```
+
+Then open `http://<pi-ip>:8080/` in a browser.
