@@ -42,3 +42,29 @@ python3 scripts/mjpeg_server.py
 ```
 
 Then open `http://<pi-ip>:8080/` in a browser.
+
+## ROI Selection & Object Detection
+
+### 1. Select ROI (Region of Interest)
+Use keyboard controls to define the chuck area:
+```bash
+python3 scripts/roi_selector.py
+```
+- Arrow keys: move ROI
+- `+`/`-` (or `w`/`s`): adjust width
+- `a`/`d`: adjust height
+- `c`: print current coordinates
+- `q`: save and quit
+
+Copy the final `[x, y, w, h]` values and update `ROI` in `scripts/presence_detector.py`.
+
+### 2. Detect Object Presence
+Run the presence detector to see if an object is in the ROI:
+```bash
+python3 scripts/presence_detector.py
+```
+- Shows "OBJECT PRESENT" or "EMPTY" based on contour area in ROI
+- `t`/`T`: adjust threshold down/up
+- `q`: quit
+
+Tune the threshold until it reliably detects your part vs. empty chuck.
