@@ -607,7 +607,8 @@ class TrimmerMonitorApp:
                 else:
                     self.machine_status = "INACTIVE"
                 
-                if current_time - self.last_telemetry >= 60:
+                # Send periodic telemetry more frequently for near real-time dashboard
+                if current_time - self.last_telemetry >= 10:
                     self.send_telemetry()
                 
                 time.sleep(0.1)
