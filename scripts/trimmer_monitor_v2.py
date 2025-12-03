@@ -381,18 +381,26 @@ class TrimmerMonitorApp:
         current_time = time.time()
         hour_ago = current_time - 3600
         cycles_in_hour = [t for t in self.cycles_last_hour if t > hour_ago]
-        
-        self.db.log_telemetry(
-            machine_id=self.machine_id,
-            trimmer_id=self.trimmer_id,
-            cycles_last_hour=len(cycles_in_hour),
-            uptime_seconds=int(current_time - self.boot_time),
-            connection_status="ONLINE",
-            machine_status=self.machine_status,
-            error_code=self.current_error_code,
-            error_text=self.current_error_text
-        )
-        self.last_telemetry = current_time
+        # If DB is unavailable, skip without error
+        try:
+            if getattr(self.db, "_conn", None):
+                self.db.log_telemetry(
+                    machine_id=self.machine_id,
+                    trimmer_id=self.trimmer_id,
+                    cycles_last_hour=len(cycles_in_hour),
+                    uptime_seconds=int(current_time - self.boot_time),
+                    connection_status="ONLINE",
+                    machine_status=self.machine_status,
+                    error_code=self.current_error_code,
+                    error_text=self.current_error_text
+                )
+            else:
+                # No DB connection; operate silently
+                pass
+        except Exception as e:
+            print(f"Telemetry send skipped due to DB error: {e}")
+        finally:
+            self.last_telemetry = current_time
     
     def add_event_log(self, message: str):
         """Add event to recent events log."""
@@ -642,8 +650,13 @@ class TrimmerMonitorApp:
             cycles_in_hour = [t for t in self.cycles_last_hour if t > hour_ago]
             
             # Fetch current lot outside of lock
+            current_lot = None
             try:
-                current_lot = self.db.get_current_req_lot(self.trimmer_id)
+                if getattr(self.db, "_conn", None):
+                    current_lot = self.db.get_current_req_lot(self.trimmer_id)
+                else:
+                    # No DB connection; report no lot without spamming errors
+                    current_lot = None
             except Exception as e:
                 print(f"Error fetching current lot: {e}")
                 current_lot = None
