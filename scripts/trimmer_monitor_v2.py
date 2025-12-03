@@ -645,7 +645,9 @@ class TrimmerMonitorApp:
                     'connection_status': 'ONLINE',
                     'machine_status': self.machine_status,
                     'time_in_state': int(time.time() - self.state_start_time)
-                })        @self.app.route('/events')
+                })
+        
+        @self.app.route('/events')
         def events():
             return jsonify({'events': self.recent_events})
         
