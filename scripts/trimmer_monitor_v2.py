@@ -332,7 +332,6 @@ class TrimmerMonitorApp:
         # State tracking
         self.state = TrimmerState.EMPTY
         self.cycle_id = None
-        self.current_lot = None
         self.state_start_time = time.time()
         
         # Statistics
@@ -340,6 +339,11 @@ class TrimmerMonitorApp:
         self.cycles_last_hour = []
         self.boot_time = time.time()
         self.last_telemetry = time.time()
+        
+        # Error tracking
+        self.missed_placements = 0
+        self.current_error_code = "OK"
+        self.current_error_text = None
         
         # Event log for web display
         self.recent_events = []
@@ -421,10 +425,6 @@ class TrimmerMonitorApp:
         cv2.putText(frame, status_text, (10, 30), 
                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, status_color, 2)
         
-        if self.current_lot:
-            cv2.putText(frame, f"Lot: {self.current_lot}", (10, 60),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
-        
         # Encode JPEG
         ret, jpeg = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
         if ret:
@@ -451,27 +451,60 @@ class TrimmerMonitorApp:
                         self.state = TrimmerState.PART_PLACED
                         self.state_start_time = current_time
                         self.cycle_id = int(current_time * 1000)
-                        self.current_lot = self.db.get_active_lot(self.machine_id)
                         
                         self.db.log_event(
                             machine_id=self.machine_id,
                             trimmer_id=self.trimmer_id,
                             event_type="placed_in",
                             cycle_id=self.cycle_id,
-                            req_lot=self.current_lot,
+                            req_lot=None,
                             area=area
                         )
-                        msg = f"PLACED - Cycle {self.cycle_id} (Lot: {self.current_lot or 'N/A'})"
+                        msg = f"PLACED - Cycle {self.cycle_id}"
                         print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
                         self.add_event_log(msg)
                 
                 elif self.state == TrimmerState.PART_PLACED:
                     if not is_present:
-                        print(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: Part removed too quickly")
+                        # Missed placement detected
+                        self.missed_placements += 1
                         self.state = TrimmerState.EMPTY
                         self.state_start_time = current_time
+                        
+                        # Log missed placement event
+                        self.db.log_event(
+                            machine_id=self.machine_id,
+                            trimmer_id=self.trimmer_id,
+                            event_type="miss_placement",
+                            cycle_id=self.cycle_id,
+                            req_lot=None,
+                            area=area,
+                            details=f"consecutive_misses:{self.missed_placements}"
+                        )
+                        
+                        # Update error state based on consecutive misses
+                        if self.missed_placements >= 5:
+                            self.current_error_code = "MISSED_PLACEMENT_ALARM"
+                            self.current_error_text = f"ALARM: {self.missed_placements} consecutive missed placements"
+                        elif self.missed_placements >= 3:
+                            self.current_error_code = "PLACEMENT_WARNING"
+                            self.current_error_text = f"Warning: {self.missed_placements} consecutive missed placements"
+                        
+                        msg = f"MISS_PLACEMENT #{self.missed_placements} - Cycle {self.cycle_id}"
+                        print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
+                        self.add_event_log(msg)
+                        
                         self.cycle_id = None
                     elif time_in_state > 1.0:
+                        # Successful placement - reset error tracking
+                        if self.missed_placements > 0:
+                            msg = f"Placement recovered after {self.missed_placements} misses"
+                            print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
+                            self.add_event_log(msg)
+                            self.missed_placements = 0
+                            self.current_error_code = "OK"
+                            self.current_error_text = None
+                        
                         self.state = TrimmerState.TRIMMING
                         self.state_start_time = current_time
                         msg = f"TRIMMING - Cycle {self.cycle_id}"
@@ -489,7 +522,7 @@ class TrimmerMonitorApp:
                             trimmer_id=self.trimmer_id,
                             event_type="pushed_out",
                             cycle_id=self.cycle_id,
-                            req_lot=self.current_lot,
+                            req_lot=None,
                             area=area,
                             details=f"duration_sec:{cycle_duration:.2f}"
                         )
@@ -499,7 +532,7 @@ class TrimmerMonitorApp:
                             trimmer_id=self.trimmer_id,
                             event_type="CYCLE",
                             cycle_id=self.cycle_id,
-                            req_lot=self.current_lot,
+                            req_lot=None,
                             details=f"cycle_time_sec:{cycle_duration:.2f}"
                         )
                         
@@ -511,7 +544,6 @@ class TrimmerMonitorApp:
                         self.add_event_log(msg)
                         
                         self.cycle_id = None
-                        self.current_lot = None
                 
                 # Send telemetry periodically
                 if current_time - self.last_telemetry >= 60:
@@ -523,7 +555,9 @@ class TrimmerMonitorApp:
                         trimmer_id=self.trimmer_id,
                         cycles_last_hour=len(self.cycles_last_hour),
                         uptime_seconds=int(current_time - self.boot_time),
-                        status="ONLINE"
+                        status="ONLINE",
+                        error_code=self.current_error_code,
+                        error_text=self.current_error_text
                     )
                     self.last_telemetry = current_time
                 

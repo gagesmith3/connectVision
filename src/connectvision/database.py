@@ -2,6 +2,14 @@
 MySQL backend client for connectVision.
 Handles trimmer registration, config persistence, and event logging.
 Uses existing iwt_db schema: secondary_machines, trimmer_events, trimmer_telemetry.
+
+INTEGRATION WITH EXISTING SYSTEMS:
+- trimming_data.reqID: Managed by webapp - vision system only reads this value
+- secondary_machines: Stores vision system device info and ROI config
+- trimmer_events: Logs all vision-detected events (placed_in, pushed_out, CYCLE)
+- trimmer_telemetry: Logs periodic health metrics (uptime, cycles/hour, errors)
+
+Vision system observes and logs events with whatever lot is currently in trimming_data.
 """
 import socket
 import json
@@ -306,33 +314,6 @@ class ConnectVisionDB:
             print(f"log_telemetry error: {e}")
             self._conn.rollback()
             return False
-    
-    def get_active_lot(self, trimmer_id: int) -> Optional[str]:
-        """
-        Get the currently assigned lot for this trimmer from secondary_assignments.
-        
-        Args:
-            trimmer_id: Machine ID
-            
-        Returns:
-            reqLot string if found, None otherwise
-        """
-        if not self._conn:
-            return None
-        try:
-            cursor = self._conn.cursor()
-            sql = """
-                SELECT reqLot FROM secondary_assignments 
-                WHERE machineID = %s AND assignment_status = 'WORKING'
-                LIMIT 1
-            """
-            cursor.execute(sql, (trimmer_id,))
-            row = cursor.fetchone()
-            cursor.close()
-            return row[0] if row else None
-        except Error as e:
-            print(f"get_active_lot error: {e}")
-            return None
     
     def close(self):
         """Close database connection."""
