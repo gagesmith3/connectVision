@@ -482,15 +482,16 @@ class TrimmerMonitorApp:
                         self.last_state_change = current_time
                         
                         try:
-                            current_lot = self.db.get_current_req_lot(self.trimmer_id)
-                            self.db.log_event(
-                              machine_id=self.machine_id,
-                              trimmer_id=self.trimmer_id,
-                              event_type="placed_in",
-                              cycle_id=self.cycle_id,
-                              req_lot=current_lot,
-                              area=area
-                            )
+                            if getattr(self.db, "_conn", None):
+                                current_lot = self.db.get_current_req_lot(self.trimmer_id)
+                                self.db.log_event(
+                                  machine_id=self.machine_id,
+                                  trimmer_id=self.trimmer_id,
+                                  event_type="placed_in",
+                                  cycle_id=self.cycle_id,
+                                  req_lot=current_lot,
+                                  area=area
+                                )
                         except Exception as e:
                             print(f"DB error logging placed_in: {e}")
                         
@@ -508,16 +509,17 @@ class TrimmerMonitorApp:
                         
                         # Log missed placement event
                         try:
-                            current_lot = self.db.get_current_req_lot(self.trimmer_id)
-                            self.db.log_event(
-                              machine_id=self.machine_id,
-                              trimmer_id=self.trimmer_id,
-                              event_type="miss_placement",
-                              cycle_id=self.cycle_id,
-                              req_lot=current_lot,
-                              area=area,
-                              details=f"consecutive_misses:{self.missed_placements}"
-                            )
+                            if getattr(self.db, "_conn", None):
+                                current_lot = self.db.get_current_req_lot(self.trimmer_id)
+                                self.db.log_event(
+                                  machine_id=self.machine_id,
+                                  trimmer_id=self.trimmer_id,
+                                  event_type="miss_placement",
+                                  cycle_id=self.cycle_id,
+                                  req_lot=current_lot,
+                                  area=area,
+                                  details=f"consecutive_misses:{self.missed_placements}"
+                                )
                         except Exception as e:
                             print(f"DB error logging miss_placement: {e}")
                         
@@ -565,28 +567,29 @@ class TrimmerMonitorApp:
                         self.last_state_change = current_time
                         
                         try:
-                            current_lot = self.db.get_current_req_lot(self.trimmer_id)
-                            self.db.log_event(
-                              machine_id=self.machine_id,
-                              trimmer_id=self.trimmer_id,
-                              event_type="pushed_out",
-                              cycle_id=self.cycle_id,
-                              req_lot=current_lot,
-                              area=area,
-                              details=f"duration_sec:{cycle_duration:.2f}"
-                            )
-                            
-                            self.db.log_event(
-                              machine_id=self.machine_id,
-                              trimmer_id=self.trimmer_id,
-                              event_type="CYCLE",
-                              cycle_id=self.cycle_id,
-                              req_lot=current_lot,
-                              details=f"cycle_time_sec:{cycle_duration:.2f}"
-                            )
-                            # Persist trimmed count per lot
-                            if current_lot:
-                              self.db.increment_trimmed_qty(current_lot, self.trimmer_id, 1)
+                            if getattr(self.db, "_conn", None):
+                                current_lot = self.db.get_current_req_lot(self.trimmer_id)
+                                self.db.log_event(
+                                  machine_id=self.machine_id,
+                                  trimmer_id=self.trimmer_id,
+                                  event_type="pushed_out",
+                                  cycle_id=self.cycle_id,
+                                  req_lot=current_lot,
+                                  area=area,
+                                  details=f"duration_sec:{cycle_duration:.2f}"
+                                )
+                                
+                                self.db.log_event(
+                                  machine_id=self.machine_id,
+                                  trimmer_id=self.trimmer_id,
+                                  event_type="CYCLE",
+                                  cycle_id=self.cycle_id,
+                                  req_lot=current_lot,
+                                  details=f"cycle_time_sec:{cycle_duration:.2f}"
+                                )
+                                # Persist trimmed count per lot
+                                if current_lot:
+                                  self.db.increment_trimmed_qty(current_lot, self.trimmer_id, 1)
                         except Exception as e:
                             print(f"DB error logging cycle: {e}")
                         
@@ -701,16 +704,30 @@ class TrimmerMonitorApp:
         
         @self.app.route('/save_config', methods=['POST'])
         def save_config():
+          try:
+            print(f"Saving config: Machine {self.config.machine_id}, ROI=[{self.config.roi_x},{self.config.roi_y},{self.config.roi_w},{self.config.roi_h}], Threshold={self.config.threshold}, MinArea={self.config.min_area}")
+            success = False
+            if getattr(self.db, "_conn", None):
+              success = self.db.save_trimmer_config(self.config)
+            else:
+              raise RuntimeError("MySQL connection not available")
+            print(f"Save result: {success}")
+            return jsonify({'ok': success})
+          except Exception as e:
+            msg = str(e)
+            print(f"Error saving config: {msg}")
+            # Attempt a lightweight reconnect then retry once
             try:
-                print(f"Saving config: Machine {self.config.machine_id}, ROI=[{self.config.roi_x},{self.config.roi_y},{self.config.roi_w},{self.config.roi_h}], Threshold={self.config.threshold}, MinArea={self.config.min_area}")
-                success = self.db.save_trimmer_config(self.config)
-                print(f"Save result: {success}")
-                return jsonify({'ok': success})
-            except Exception as e:
-                print(f"Error saving config: {e}")
-                import traceback
-                traceback.print_exc()
-                return jsonify({'ok': False, 'error': str(e)})
+              reconnect = getattr(self.db, 'reconnect', None)
+              if callable(reconnect):
+                reconnect()
+                if getattr(self.db, "_conn", None):
+                  print("Retrying save after reconnect...")
+                  success = self.db.save_trimmer_config(self.config)
+                  return jsonify({'ok': success})
+            except Exception as e2:
+              print(f"Reconnect attempt failed: {e2}")
+            return jsonify({'ok': False, 'error': msg})
         
         @self.app.route('/reload_config', methods=['POST'])
         def reload_config():
