@@ -473,15 +473,19 @@ class TrimmerMonitorApp:
                         self.cycle_id = int(current_time * 1000)
                         self.last_state_change = current_time
                         
-                        current_lot = self.db.get_current_req_lot(self.trimmer_id)
-                        self.db.log_event(
-                          machine_id=self.machine_id,
-                          trimmer_id=self.trimmer_id,
-                          event_type="placed_in",
-                          cycle_id=self.cycle_id,
-                          req_lot=current_lot,
-                          area=area
-                        )
+                        try:
+                            current_lot = self.db.get_current_req_lot(self.trimmer_id)
+                            self.db.log_event(
+                              machine_id=self.machine_id,
+                              trimmer_id=self.trimmer_id,
+                              event_type="placed_in",
+                              cycle_id=self.cycle_id,
+                              req_lot=current_lot,
+                              area=area
+                            )
+                        except Exception as e:
+                            print(f"DB error logging placed_in: {e}")
+                        
                         msg = f"PLACED - Cycle {self.cycle_id}"
                         print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
                         self.add_event_log(msg)
@@ -495,16 +499,19 @@ class TrimmerMonitorApp:
                         self.last_state_change = current_time
                         
                         # Log missed placement event
-                        current_lot = self.db.get_current_req_lot(self.trimmer_id)
-                        self.db.log_event(
-                          machine_id=self.machine_id,
-                          trimmer_id=self.trimmer_id,
-                          event_type="miss_placement",
-                          cycle_id=self.cycle_id,
-                          req_lot=current_lot,
-                          area=area,
-                          details=f"consecutive_misses:{self.missed_placements}"
-                        )
+                        try:
+                            current_lot = self.db.get_current_req_lot(self.trimmer_id)
+                            self.db.log_event(
+                              machine_id=self.machine_id,
+                              trimmer_id=self.trimmer_id,
+                              event_type="miss_placement",
+                              cycle_id=self.cycle_id,
+                              req_lot=current_lot,
+                              area=area,
+                              details=f"consecutive_misses:{self.missed_placements}"
+                            )
+                        except Exception as e:
+                            print(f"DB error logging miss_placement: {e}")
                         
                         # Update error state based on consecutive misses
                         if self.missed_placements >= 5:
@@ -549,29 +556,31 @@ class TrimmerMonitorApp:
                         self.state_start_time = current_time
                         self.last_state_change = current_time
                         
-                        current_lot = self.db.get_current_req_lot(self.trimmer_id)
-                        self.db.log_event(
-                          machine_id=self.machine_id,
-                          trimmer_id=self.trimmer_id,
-                          event_type="pushed_out",
-                          cycle_id=self.cycle_id,
-                          req_lot=current_lot,
-                          area=area,
-                          details=f"duration_sec:{cycle_duration:.2f}"
-                        )
-                        
-                        current_lot = self.db.get_current_req_lot(self.trimmer_id)
-                        self.db.log_event(
-                          machine_id=self.machine_id,
-                          trimmer_id=self.trimmer_id,
-                          event_type="CYCLE",
-                          cycle_id=self.cycle_id,
-                          req_lot=current_lot,
-                          details=f"cycle_time_sec:{cycle_duration:.2f}"
-                        )
-                        # Persist trimmed count per lot
-                        if current_lot:
-                          self.db.increment_trimmed_qty(current_lot, self.trimmer_id, 1)
+                        try:
+                            current_lot = self.db.get_current_req_lot(self.trimmer_id)
+                            self.db.log_event(
+                              machine_id=self.machine_id,
+                              trimmer_id=self.trimmer_id,
+                              event_type="pushed_out",
+                              cycle_id=self.cycle_id,
+                              req_lot=current_lot,
+                              area=area,
+                              details=f"duration_sec:{cycle_duration:.2f}"
+                            )
+                            
+                            self.db.log_event(
+                              machine_id=self.machine_id,
+                              trimmer_id=self.trimmer_id,
+                              event_type="CYCLE",
+                              cycle_id=self.cycle_id,
+                              req_lot=current_lot,
+                              details=f"cycle_time_sec:{cycle_duration:.2f}"
+                            )
+                            # Persist trimmed count per lot
+                            if current_lot:
+                              self.db.increment_trimmed_qty(current_lot, self.trimmer_id, 1)
+                        except Exception as e:
+                            print(f"DB error logging cycle: {e}")
                         
                         self.total_cycles += 1
                         self.cycles_last_hour.append(current_time)
@@ -631,7 +640,13 @@ class TrimmerMonitorApp:
         def status():
             hour_ago = time.time() - 3600
             cycles_in_hour = [t for t in self.cycles_last_hour if t > hour_ago]
-            current_lot = self.db.get_current_req_lot(self.trimmer_id)
+            
+            # Fetch current lot outside of lock
+            try:
+                current_lot = self.db.get_current_req_lot(self.trimmer_id)
+            except Exception as e:
+                print(f"Error fetching current lot: {e}")
+                current_lot = None
             
             with self.frame_lock:
                 return jsonify({
