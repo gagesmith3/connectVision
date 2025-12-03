@@ -89,7 +89,11 @@ class ConnectVisionDB:
             hostname = socket.gethostname()
         if not ip_address:
             try:
-                ip_address = socket.gethostbyname(socket.gethostname())
+                # Get actual network IP, not localhost
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.connect(("8.8.8.8", 80))  # Connect to Google DNS to get network IP
+                ip_address = s.getsockname()[0]
+                s.close()
             except:
                 ip_address = "unknown"
         
@@ -204,7 +208,7 @@ class ConnectVisionDB:
             self._conn.rollback()
             return False
     
-    def log_event(self, trimmer_id: int, event_type: str, 
+    def log_event(self, machine_id: int, trimmer_id: int, event_type: str, 
                   cycle_id: Optional[int] = None,
                   req_lot: Optional[str] = None,
                   area: Optional[int] = None,
@@ -213,7 +217,8 @@ class ConnectVisionDB:
         Log a detection event to trimmer_events table.
         
         Args:
-            trimmer_id: Machine ID from secondary_machines
+            machine_id: Machine ID from secondary_machines
+            trimmer_id: Trimmer number (from machineName)
             event_type: Event type (placed_in, pushed_out, CYCLE, ERROR, HEARTBEAT)
             cycle_id: Optional cycle grouping ID
             req_lot: Optional lot number being processed
@@ -224,7 +229,7 @@ class ConnectVisionDB:
             Event ID if successful, None otherwise
         """
         if not self._conn:
-            print(f"(stub) log_event: {event_type} on trimmer {trimmer_id}")
+            print(f"(stub) log_event: {event_type} on machine {machine_id} (trimmer {trimmer_id})")
             return None
         try:
             cursor = self._conn.cursor()
@@ -242,10 +247,10 @@ class ConnectVisionDB:
             
             sql = """
                 INSERT INTO trimmer_events 
-                (trimmer_id, type, cycle_id, reqLot, area, details)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                (trimmer_id, machine_id, type, cycle_id, reqLot, area, details)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
             """
-            cursor.execute(sql, (trimmer_id, event_type, cycle_id, req_lot, area, details))
+            cursor.execute(sql, (trimmer_id, machine_id, event_type, cycle_id, req_lot, area, details))
             self._conn.commit()
             event_id = cursor.lastrowid
             cursor.close()
@@ -255,7 +260,7 @@ class ConnectVisionDB:
             self._conn.rollback()
             return None
     
-    def log_telemetry(self, trimmer_id: int, cycles_last_hour: int,
+    def log_telemetry(self, machine_id: int, trimmer_id: int, cycles_last_hour: int,
                      uptime_seconds: int, status: str = "ONLINE",
                      error_code: Optional[str] = None,
                      error_text: Optional[str] = None) -> bool:
@@ -263,7 +268,8 @@ class ConnectVisionDB:
         Log periodic telemetry to trimmer_telemetry table.
         
         Args:
-            trimmer_id: Machine ID
+            machine_id: Machine ID from secondary_machines
+            trimmer_id: Trimmer number (from machineName)
             cycles_last_hour: Number of cycles in last rolling hour
             uptime_seconds: Seconds since boot/restart
             status: ONLINE, OFFLINE, IDLE, ERROR
@@ -274,16 +280,16 @@ class ConnectVisionDB:
             True if successful, False otherwise
         """
         if not self._conn:
-            print(f"(stub) log_telemetry: trimmer {trimmer_id}, status={status}")
+            print(f"(stub) log_telemetry: machine {machine_id} (trimmer {trimmer_id}), status={status}")
             return False
         try:
             cursor = self._conn.cursor()
             sql = """
                 INSERT INTO trimmer_telemetry 
-                (trimmer_id, cycles_last_hour, uptime_seconds, status, error_code, error_text)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                (trimmer_id, machine_id, cycles_last_hour, uptime_seconds, status, error_code, error_text)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
             """
-            cursor.execute(sql, (trimmer_id, cycles_last_hour, uptime_seconds, 
+            cursor.execute(sql, (trimmer_id, machine_id, cycles_last_hour, uptime_seconds, 
                                 status, error_code, error_text))
             self._conn.commit()
             cursor.close()
@@ -291,7 +297,7 @@ class ConnectVisionDB:
             # Also update last_seen in secondary_machines
             cursor = self._conn.cursor()
             sql = "UPDATE secondary_machines SET last_seen = NOW() WHERE machineID = %s"
-            cursor.execute(sql, (trimmer_id,))
+            cursor.execute(sql, (machine_id,))
             self._conn.commit()
             cursor.close()
             

@@ -325,6 +325,7 @@ class TrimmerMonitorApp:
     
     def __init__(self, machine_id: int, db: ConnectVisionDB, config: TrimmerConfig):
         self.machine_id = machine_id
+        self.trimmer_id = int(config.machine_name) if config.machine_name.isdigit() else 0
         self.db = db
         self.config = config
         
@@ -367,7 +368,7 @@ class TrimmerMonitorApp:
         self.running = False
         self.monitor_thread = None
         
-        print(f"TrimmerMonitorApp initialized: Machine {machine_id} ({config.machine_name})")
+        print(f"TrimmerMonitorApp initialized: Machine {machine_id}, Trimmer {self.trimmer_id} ({config.machine_name})")
     
     def add_event_log(self, message: str):
         """Add event to recent events log."""
@@ -453,7 +454,8 @@ class TrimmerMonitorApp:
                         self.current_lot = self.db.get_active_lot(self.machine_id)
                         
                         self.db.log_event(
-                            trimmer_id=self.machine_id,
+                            machine_id=self.machine_id,
+                            trimmer_id=self.trimmer_id,
                             event_type="placed_in",
                             cycle_id=self.cycle_id,
                             req_lot=self.current_lot,
@@ -483,7 +485,8 @@ class TrimmerMonitorApp:
                         self.state_start_time = current_time
                         
                         self.db.log_event(
-                            trimmer_id=self.machine_id,
+                            machine_id=self.machine_id,
+                            trimmer_id=self.trimmer_id,
                             event_type="pushed_out",
                             cycle_id=self.cycle_id,
                             req_lot=self.current_lot,
@@ -492,7 +495,8 @@ class TrimmerMonitorApp:
                         )
                         
                         self.db.log_event(
-                            trimmer_id=self.machine_id,
+                            machine_id=self.machine_id,
+                            trimmer_id=self.trimmer_id,
                             event_type="CYCLE",
                             cycle_id=self.cycle_id,
                             req_lot=self.current_lot,
@@ -515,7 +519,8 @@ class TrimmerMonitorApp:
                     self.cycles_last_hour = [t for t in self.cycles_last_hour if t > hour_ago]
                     
                     self.db.log_telemetry(
-                        trimmer_id=self.machine_id,
+                        machine_id=self.machine_id,
+                        trimmer_id=self.trimmer_id,
                         cycles_last_hour=len(self.cycles_last_hour),
                         uptime_seconds=int(current_time - self.boot_time),
                         status="ONLINE"
