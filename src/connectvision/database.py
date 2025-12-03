@@ -318,6 +318,30 @@ class ConnectVisionDB:
         if not self._conn:
             print(f"(stub) log_telemetry: machine {machine_id} (trimmer {trimmer_id}), conn={connection_status}, status={machine_status}")
             return False
+        try:
+            cursor = self._conn.cursor()
+            sql = """
+                INSERT INTO trimmer_telemetry 
+                (trimmer_id, machine_id, cycles_last_hour, uptime_seconds, status, machine_status, error_code, error_text)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """
+            cursor.execute(sql, (trimmer_id, machine_id, cycles_last_hour, uptime_seconds, 
+                                connection_status, machine_status, error_code, error_text))
+            self._conn.commit()
+            cursor.close()
+            
+            # Also update last_seen in secondary_machines (redundant with heartbeat but keeps telemetry self-contained)
+            cursor = self._conn.cursor()
+            sql = "UPDATE secondary_machines SET last_seen = NOW() WHERE machineID = %s"
+            cursor.execute(sql, (machine_id,))
+            self._conn.commit()
+            cursor.close()
+            
+            return True
+        except Error as e:
+            print(f"log_telemetry error: {e}")
+            self._conn.rollback()
+            return False
 
     def get_current_req_lot(self, trimmer_id: int) -> Optional[str]:
         """Read-only fetch of current reqID (lot) from trimming_data for a trimmer.
@@ -361,30 +385,6 @@ class ConnectVisionDB:
             return True
         except Error as e:
             print(f"increment_trimmed_qty error: {e}")
-            self._conn.rollback()
-            return False
-        try:
-            cursor = self._conn.cursor()
-            sql = """
-                INSERT INTO trimmer_telemetry 
-                (trimmer_id, machine_id, cycles_last_hour, uptime_seconds, status, machine_status, error_code, error_text)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            """
-            cursor.execute(sql, (trimmer_id, machine_id, cycles_last_hour, uptime_seconds, 
-                                connection_status, machine_status, error_code, error_text))
-            self._conn.commit()
-            cursor.close()
-            
-            # Also update last_seen in secondary_machines
-            cursor = self._conn.cursor()
-            sql = "UPDATE secondary_machines SET last_seen = NOW() WHERE machineID = %s"
-            cursor.execute(sql, (machine_id,))
-            self._conn.commit()
-            cursor.close()
-            
-            return True
-        except Error as e:
-            print(f"log_telemetry error: {e}")
             self._conn.rollback()
             return False
     
