@@ -631,6 +631,7 @@ class TrimmerMonitorApp:
         def status():
             hour_ago = time.time() - 3600
             cycles_in_hour = [t for t in self.cycles_last_hour if t > hour_ago]
+            current_lot = self.db.get_current_req_lot(self.trimmer_id)
             
             with self.frame_lock:
                 return jsonify({
@@ -639,7 +640,7 @@ class TrimmerMonitorApp:
                     'state': self.state.value,
                     'total_cycles': self.total_cycles,
                     'cycles_per_hour': len(cycles_in_hour),
-                    'current_lot': self.current_lot,
+                    'current_lot': current_lot,
                     'uptime': int(time.time() - self.boot_time),
                     'connection_status': 'ONLINE',
                     'machine_status': self.machine_status,
