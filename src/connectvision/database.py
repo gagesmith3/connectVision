@@ -290,6 +290,51 @@ class ConnectVisionDB:
         if not self._conn:
             print(f"(stub) log_telemetry: machine {machine_id} (trimmer {trimmer_id}), status={status}")
             return False
+
+    def get_current_req_lot(self, trimmer_id: int) -> Optional[str]:
+        """Read-only fetch of current reqID (lot) from trimming_data for a trimmer.
+
+        Returns the lot string if present, else None. This does not modify any lot data.
+        """
+        if not self._conn:
+            return None
+        try:
+            cursor = self._conn.cursor()
+            sql = "SELECT reqID FROM trimming_data WHERE trimmer_id = %s LIMIT 1"
+            cursor.execute(sql, (trimmer_id,))
+            row = cursor.fetchone()
+            cursor.close()
+            if row and row[0]:
+                return str(row[0])
+            return None
+        except Error as e:
+            print(f"get_current_req_lot error: {e}")
+            return None
+
+    def increment_trimmed_qty(self, req_lot: str, trimmer_id: int, qty: int = 1) -> bool:
+        """Persistently track trimmed quantity per lot and trimmer.
+
+        Creates row if not exists, otherwise increments trimmed_qty and updates timestamp.
+        Table expected: mfgreq_trim(reqLot VARCHAR, trimmer_id INT, trimmed_qty INT, last_updated DATETIME)
+        With unique key on (reqLot, trimmer_id).
+        """
+        if not self._conn or not req_lot:
+            return False
+        try:
+            cursor = self._conn.cursor()
+            sql = (
+                "INSERT INTO mfgreq_trim (reqLot, trimmer_id, trimmed_qty, last_updated) "
+                "VALUES (%s, %s, %s, NOW()) "
+                "ON DUPLICATE KEY UPDATE trimmed_qty = trimmed_qty + VALUES(trimmed_qty), last_updated = NOW()"
+            )
+            cursor.execute(sql, (req_lot, trimmer_id, qty))
+            self._conn.commit()
+            cursor.close()
+            return True
+        except Error as e:
+            print(f"increment_trimmed_qty error: {e}")
+            self._conn.rollback()
+            return False
         try:
             cursor = self._conn.cursor()
             sql = """

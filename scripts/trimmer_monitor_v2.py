@@ -374,6 +374,23 @@ class TrimmerMonitorApp:
         
         print(f"TrimmerMonitorApp initialized: Machine {machine_id}, Trimmer {self.trimmer_id} ({config.machine_name})")
     
+    def send_telemetry(self):
+        """Send telemetry update to database."""
+        current_time = time.time()
+        hour_ago = current_time - 3600
+        cycles_in_hour = [t for t in self.cycles_last_hour if t > hour_ago]
+        
+        self.db.log_telemetry(
+            machine_id=self.machine_id,
+            trimmer_id=self.trimmer_id,
+            cycles_last_hour=len(cycles_in_hour),
+            uptime_seconds=int(current_time - self.boot_time),
+            status="ONLINE",
+            error_code=self.current_error_code,
+            error_text=self.current_error_text
+        )
+        self.last_telemetry = current_time
+    
     def add_event_log(self, message: str):
         """Add event to recent events log."""
         timestamp = datetime.now().strftime('%H:%M:%S')
@@ -452,13 +469,14 @@ class TrimmerMonitorApp:
                         self.state_start_time = current_time
                         self.cycle_id = int(current_time * 1000)
                         
+                        current_lot = self.db.get_current_req_lot(self.trimmer_id)
                         self.db.log_event(
-                            machine_id=self.machine_id,
-                            trimmer_id=self.trimmer_id,
-                            event_type="placed_in",
-                            cycle_id=self.cycle_id,
-                            req_lot=None,
-                            area=area
+                          machine_id=self.machine_id,
+                          trimmer_id=self.trimmer_id,
+                          event_type="placed_in",
+                          cycle_id=self.cycle_id,
+                          req_lot=current_lot,
+                          area=area
                         )
                         msg = f"PLACED - Cycle {self.cycle_id}"
                         print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
@@ -472,23 +490,28 @@ class TrimmerMonitorApp:
                         self.state_start_time = current_time
                         
                         # Log missed placement event
+                        current_lot = self.db.get_current_req_lot(self.trimmer_id)
                         self.db.log_event(
-                            machine_id=self.machine_id,
-                            trimmer_id=self.trimmer_id,
-                            event_type="miss_placement",
-                            cycle_id=self.cycle_id,
-                            req_lot=None,
-                            area=area,
-                            details=f"consecutive_misses:{self.missed_placements}"
+                          machine_id=self.machine_id,
+                          trimmer_id=self.trimmer_id,
+                          event_type="miss_placement",
+                          cycle_id=self.cycle_id,
+                          req_lot=current_lot,
+                          area=area,
+                          details=f"consecutive_misses:{self.missed_placements}"
                         )
                         
                         # Update error state based on consecutive misses
                         if self.missed_placements >= 5:
                             self.current_error_code = "MISSED_PLACEMENT_ALARM"
                             self.current_error_text = f"ALARM: {self.missed_placements} consecutive missed placements"
+                            # Send immediate telemetry update for alarm
+                            self.send_telemetry()
                         elif self.missed_placements >= 3:
                             self.current_error_code = "PLACEMENT_WARNING"
                             self.current_error_text = f"Warning: {self.missed_placements} consecutive missed placements"
+                            # Send immediate telemetry update for warning
+                            self.send_telemetry()
                         
                         msg = f"MISS_PLACEMENT #{self.missed_placements} - Cycle {self.cycle_id}"
                         print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
@@ -504,6 +527,8 @@ class TrimmerMonitorApp:
                             self.missed_placements = 0
                             self.current_error_code = "OK"
                             self.current_error_text = None
+                            # Send immediate telemetry update to clear alarm
+                            self.send_telemetry()
                         
                         self.state = TrimmerState.TRIMMING
                         self.state_start_time = current_time
@@ -517,24 +542,29 @@ class TrimmerMonitorApp:
                         self.state = TrimmerState.EMPTY
                         self.state_start_time = current_time
                         
+                        current_lot = self.db.get_current_req_lot(self.trimmer_id)
                         self.db.log_event(
-                            machine_id=self.machine_id,
-                            trimmer_id=self.trimmer_id,
-                            event_type="pushed_out",
-                            cycle_id=self.cycle_id,
-                            req_lot=None,
-                            area=area,
-                            details=f"duration_sec:{cycle_duration:.2f}"
+                          machine_id=self.machine_id,
+                          trimmer_id=self.trimmer_id,
+                          event_type="pushed_out",
+                          cycle_id=self.cycle_id,
+                          req_lot=current_lot,
+                          area=area,
+                          details=f"duration_sec:{cycle_duration:.2f}"
                         )
                         
+                        current_lot = self.db.get_current_req_lot(self.trimmer_id)
                         self.db.log_event(
-                            machine_id=self.machine_id,
-                            trimmer_id=self.trimmer_id,
-                            event_type="CYCLE",
-                            cycle_id=self.cycle_id,
-                            req_lot=None,
-                            details=f"cycle_time_sec:{cycle_duration:.2f}"
+                          machine_id=self.machine_id,
+                          trimmer_id=self.trimmer_id,
+                          event_type="CYCLE",
+                          cycle_id=self.cycle_id,
+                          req_lot=current_lot,
+                          details=f"cycle_time_sec:{cycle_duration:.2f}"
                         )
+                        # Persist trimmed count per lot
+                        if current_lot:
+                          self.db.increment_trimmed_qty(current_lot, self.trimmer_id, 1)
                         
                         self.total_cycles += 1
                         self.cycles_last_hour.append(current_time)
@@ -547,19 +577,7 @@ class TrimmerMonitorApp:
                 
                 # Send telemetry periodically
                 if current_time - self.last_telemetry >= 60:
-                    hour_ago = current_time - 3600
-                    self.cycles_last_hour = [t for t in self.cycles_last_hour if t > hour_ago]
-                    
-                    self.db.log_telemetry(
-                        machine_id=self.machine_id,
-                        trimmer_id=self.trimmer_id,
-                        cycles_last_hour=len(self.cycles_last_hour),
-                        uptime_seconds=int(current_time - self.boot_time),
-                        status="ONLINE",
-                        error_code=self.current_error_code,
-                        error_text=self.current_error_text
-                    )
-                    self.last_telemetry = current_time
+                    self.send_telemetry()
                 
                 time.sleep(0.1)
             
