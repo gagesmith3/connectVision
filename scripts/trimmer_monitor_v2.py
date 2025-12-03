@@ -351,6 +351,10 @@ class TrimmerMonitorApp:
         self.recent_events = []
         self.max_events = 20
         
+        # Heartbeat tracking for online status
+        self.last_heartbeat = 0
+        self.heartbeat_interval = 10  # Send heartbeat every 10 seconds
+        
         # Thread safety
         self.frame_lock = Lock()
         self.last_jpeg = None
@@ -465,8 +469,23 @@ class TrimmerMonitorApp:
     
     def monitor_loop(self):
         """Background monitoring loop."""
+        # Send initial heartbeat immediately on startup
+        if self.db.heartbeat(self.machine_id):
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] Initial heartbeat sent - machine {self.machine_id} is ONLINE")
+            self.last_heartbeat = time.time()
+        else:
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: Failed to send initial heartbeat")
+        
         while self.running:
             try:
+                # Send periodic heartbeat to maintain online status in secondary_machines
+                current_time = time.time()
+                if current_time - self.last_heartbeat >= self.heartbeat_interval:
+                    if self.db.heartbeat(self.machine_id):
+                        self.last_heartbeat = current_time
+                    else:
+                        print(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: Heartbeat failed")
+                
                 # Process frame and detect
                 is_present, area = self.process_frame()
                 

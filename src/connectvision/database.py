@@ -137,6 +137,31 @@ class ConnectVisionDB:
             print(f"get_machine_by_device error: {e}")
             return None
     
+    def heartbeat(self, machine_id: int) -> bool:
+        """
+        Update last_seen timestamp for a machine to indicate it's online.
+        Call this on startup and periodically (every 5-10 seconds) to maintain online status.
+        
+        Args:
+            machine_id: Machine ID from secondary_machines
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self._conn:
+            return False
+        try:
+            cursor = self._conn.cursor()
+            sql = "UPDATE secondary_machines SET last_seen = NOW() WHERE machineID = %s"
+            cursor.execute(sql, (machine_id,))
+            self._conn.commit()
+            cursor.close()
+            return True
+        except Error as e:
+            print(f"heartbeat error: {e}")
+            self._conn.rollback()
+            return False
+    
     def load_trimmer_config(self, machine_id: int) -> Optional[TrimmerConfig]:
         """
         Load vision config for a trimmer from secondary_machines.
