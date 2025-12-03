@@ -191,8 +191,13 @@ function saveToDatabase() {
     if (data.ok) {
       alert('✓ Configuration saved to database successfully!');
     } else {
-      alert('✗ Failed to save configuration');
+      alert('✗ Failed to save configuration' + (data.error ? ': ' + data.error : ''));
+      console.error('Save error:', data);
     }
+  })
+  .catch(err => {
+    alert('✗ Network error: ' + err);
+    console.error('Network error:', err);
   });
 }
 
@@ -592,8 +597,16 @@ class TrimmerMonitorApp:
         
         @self.app.route('/save_config', methods=['POST'])
         def save_config():
-            success = self.db.save_trimmer_config(self.config)
-            return jsonify({'ok': success})
+            try:
+                print(f"Saving config: Machine {self.config.machine_id}, ROI=[{self.config.roi_x},{self.config.roi_y},{self.config.roi_w},{self.config.roi_h}], Threshold={self.config.threshold}, MinArea={self.config.min_area}")
+                success = self.db.save_trimmer_config(self.config)
+                print(f"Save result: {success}")
+                return jsonify({'ok': success})
+            except Exception as e:
+                print(f"Error saving config: {e}")
+                import traceback
+                traceback.print_exc()
+                return jsonify({'ok': False, 'error': str(e)})
         
         @self.app.route('/reload_config', methods=['POST'])
         def reload_config():
@@ -685,6 +698,16 @@ def main():
     )
     
     db = ConnectVisionDB(db_config)
+    
+    # Check if database connection is working
+    if not db._conn:
+        print("="*60)
+        print("WARNING: Database connection failed!")
+        print("Running in stub mode - events will NOT be saved to database")
+        print("Make sure mysql-connector-python is installed:")
+        print("  pip3 install mysql-connector-python")
+        print("="*60)
+        # Still allow running for testing, but warn user
     
     # Register device
     db.register_device(machine_id=args.machine_id, device_id=device_id)
