@@ -487,7 +487,7 @@ class TrimmerMonitorApp:
     def monitor_loop(self):
         """Background monitoring loop."""
         # Send initial heartbeat immediately on startup
-        if self.db.heartbeat(self.machine_id):
+        if self.db.heartbeat(self.machine_id, self.machine_status):
             print(f"[{datetime.now().strftime('%H:%M:%S')}] Initial heartbeat sent - machine {self.machine_id} is ONLINE")
             self.last_heartbeat = time.time()
         else:
@@ -495,14 +495,6 @@ class TrimmerMonitorApp:
         
         while self.running:
             try:
-                # Send periodic heartbeat to maintain online status in secondary_machines
-                current_time = time.time()
-                if current_time - self.last_heartbeat >= self.heartbeat_interval:
-                    if self.db.heartbeat(self.machine_id):
-                        self.last_heartbeat = current_time
-                    else:
-                        print(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: Heartbeat failed")
-                
                 # Process frame and detect
                 is_present, area = self.process_frame()
                 
@@ -624,6 +616,13 @@ class TrimmerMonitorApp:
                     self.machine_status = "ACTIVE"
                 else:
                     self.machine_status = "INACTIVE"
+                
+                # Send periodic heartbeat to maintain online status and update machine_status
+                if current_time - self.last_heartbeat >= self.heartbeat_interval:
+                    if self.db.heartbeat(self.machine_id, self.machine_status):
+                        self.last_heartbeat = current_time
+                    else:
+                        print(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: Heartbeat failed")
                 
                 # Send periodic telemetry every 60s (heartbeat handles online status)
                 if current_time - self.last_telemetry >= 60:

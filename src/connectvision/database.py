@@ -162,13 +162,14 @@ class ConnectVisionDB:
             print(f"get_machine_by_device error: {e}")
             return None
     
-    def heartbeat(self, machine_id: int) -> bool:
+    def heartbeat(self, machine_id: int, machine_status: str = 'INACTIVE') -> bool:
         """
-        Update last_seen timestamp for a machine to indicate it's online.
+        Update last_seen timestamp and machine status to indicate online/active state.
         Call this on startup and periodically (every 5-10 seconds) to maintain online status.
         
         Args:
             machine_id: Machine ID from secondary_machines
+            machine_status: 'ACTIVE' or 'INACTIVE' based on current processing state
             
         Returns:
             True if successful, False otherwise
@@ -177,8 +178,8 @@ class ConnectVisionDB:
             return False
         try:
             cursor = self._conn.cursor()
-            sql = "UPDATE secondary_machines SET last_seen = NOW() WHERE machineID = %s"
-            cursor.execute(sql, (machine_id,))
+            sql = "UPDATE secondary_machines SET last_seen = NOW(), machine_status = %s WHERE machineID = %s"
+            cursor.execute(sql, (machine_status, machine_id))
             cursor.close()
             return True
         except Error as e:
