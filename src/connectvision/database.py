@@ -269,7 +269,9 @@ class ConnectVisionDB:
             return None
     
     def log_telemetry(self, machine_id: int, trimmer_id: int, cycles_last_hour: int,
-                     uptime_seconds: int, status: str = "ONLINE",
+                     uptime_seconds: int, 
+                     connection_status: str = "ONLINE",
+                     machine_status: str = "INACTIVE",
                      error_code: Optional[str] = None,
                      error_text: Optional[str] = None) -> bool:
         """
@@ -280,7 +282,8 @@ class ConnectVisionDB:
             trimmer_id: Trimmer number (from machineName)
             cycles_last_hour: Number of cycles in last rolling hour
             uptime_seconds: Seconds since boot/restart
-            status: ONLINE, OFFLINE, IDLE, ERROR
+            connection_status: ONLINE or OFFLINE (vision system connectivity)
+            machine_status: ACTIVE or INACTIVE (machine running based on recent cycles)
             error_code: Optional error identifier
             error_text: Optional error description
             
@@ -288,7 +291,7 @@ class ConnectVisionDB:
             True if successful, False otherwise
         """
         if not self._conn:
-            print(f"(stub) log_telemetry: machine {machine_id} (trimmer {trimmer_id}), status={status}")
+            print(f"(stub) log_telemetry: machine {machine_id} (trimmer {trimmer_id}), conn={connection_status}, status={machine_status}")
             return False
 
     def get_current_req_lot(self, trimmer_id: int) -> Optional[str]:
@@ -339,11 +342,11 @@ class ConnectVisionDB:
             cursor = self._conn.cursor()
             sql = """
                 INSERT INTO trimmer_telemetry 
-                (trimmer_id, machine_id, cycles_last_hour, uptime_seconds, status, error_code, error_text)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                (trimmer_id, machine_id, cycles_last_hour, uptime_seconds, status, machine_status, error_code, error_text)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """
             cursor.execute(sql, (trimmer_id, machine_id, cycles_last_hour, uptime_seconds, 
-                                status, error_code, error_text))
+                                connection_status, machine_status, error_code, error_text))
             self._conn.commit()
             cursor.close()
             

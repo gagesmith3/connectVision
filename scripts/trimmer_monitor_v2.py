@@ -339,6 +339,8 @@ class TrimmerMonitorApp:
         self.cycles_last_hour = []
         self.boot_time = time.time()
         self.last_telemetry = time.time()
+        self.last_state_change = time.time()
+        self.machine_status = "INACTIVE"  # ACTIVE or INACTIVE
         
         # Error tracking
         self.missed_placements = 0
@@ -385,7 +387,8 @@ class TrimmerMonitorApp:
             trimmer_id=self.trimmer_id,
             cycles_last_hour=len(cycles_in_hour),
             uptime_seconds=int(current_time - self.boot_time),
-            status="ONLINE",
+            connection_status="ONLINE",
+            machine_status=self.machine_status,
             error_code=self.current_error_code,
             error_text=self.current_error_text
         )
@@ -468,6 +471,7 @@ class TrimmerMonitorApp:
                         self.state = TrimmerState.PART_PLACED
                         self.state_start_time = current_time
                         self.cycle_id = int(current_time * 1000)
+                        self.last_state_change = current_time
                         
                         current_lot = self.db.get_current_req_lot(self.trimmer_id)
                         self.db.log_event(
@@ -488,6 +492,7 @@ class TrimmerMonitorApp:
                         self.missed_placements += 1
                         self.state = TrimmerState.EMPTY
                         self.state_start_time = current_time
+                        self.last_state_change = current_time
                         
                         # Log missed placement event
                         current_lot = self.db.get_current_req_lot(self.trimmer_id)
@@ -532,6 +537,7 @@ class TrimmerMonitorApp:
                         
                         self.state = TrimmerState.TRIMMING
                         self.state_start_time = current_time
+                        self.last_state_change = current_time
                         msg = f"TRIMMING - Cycle {self.cycle_id}"
                         print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
                         self.add_event_log(msg)
@@ -541,6 +547,7 @@ class TrimmerMonitorApp:
                         cycle_duration = current_time - self.state_start_time
                         self.state = TrimmerState.EMPTY
                         self.state_start_time = current_time
+                        self.last_state_change = current_time
                         
                         current_lot = self.db.get_current_req_lot(self.trimmer_id)
                         self.db.log_event(
@@ -575,7 +582,14 @@ class TrimmerMonitorApp:
                         
                         self.cycle_id = None
                 
-                # Send telemetry periodically
+                # Compute machine active/inactive status before telemetry
+                sixty_sec_ago = current_time - 60
+                recent_cycles = [t for t in self.cycles_last_hour if t > sixty_sec_ago]
+                if len(recent_cycles) > 0:
+                    self.machine_status = "ACTIVE"
+                else:
+                    self.machine_status = "INACTIVE"
+                
                 if current_time - self.last_telemetry >= 60:
                     self.send_telemetry()
                 
@@ -626,10 +640,11 @@ class TrimmerMonitorApp:
                     'total_cycles': self.total_cycles,
                     'cycles_per_hour': len(cycles_in_hour),
                     'current_lot': self.current_lot,
-                    'uptime': int(time.time() - self.boot_time)
-                })
-        
-        @self.app.route('/events')
+                    'uptime': int(time.time() - self.boot_time),
+                    'connection_status': 'ONLINE',
+                    'machine_status': self.machine_status,
+                    'time_in_state': int(time.time() - self.state_start_time)
+                })        @self.app.route('/events')
         def events():
             return jsonify({'events': self.recent_events})
         
