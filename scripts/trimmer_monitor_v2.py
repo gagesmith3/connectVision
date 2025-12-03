@@ -355,6 +355,11 @@ class TrimmerMonitorApp:
         self.last_heartbeat = 0
         self.heartbeat_interval = 10  # Send heartbeat every 10 seconds
         
+        # Cached lot tracking (refresh every 60s instead of every cycle)
+        self.cached_lot = None
+        self.last_lot_fetch = 0
+        self.lot_cache_duration = 60  # Refresh lot every 60 seconds
+        
         # Thread safety
         self.frame_lock = Lock()
         self.last_jpeg = None
@@ -379,6 +384,18 @@ class TrimmerMonitorApp:
         self.monitor_thread = None
         
         print(f"TrimmerMonitorApp initialized: Machine {machine_id}, Trimmer {self.trimmer_id} ({config.machine_name})")
+    
+    def get_cached_lot(self) -> Optional[str]:
+        """Get current lot from cache, refresh if stale."""
+        current_time = time.time()
+        if current_time - self.last_lot_fetch >= self.lot_cache_duration:
+            try:
+                if getattr(self.db, "_conn", None):
+                    self.cached_lot = self.db.get_current_req_lot(self.trimmer_id)
+                    self.last_lot_fetch = current_time
+            except Exception as e:
+                print(f"Error fetching lot: {e}")
+        return self.cached_lot
     
     def send_telemetry(self):
         """Send telemetry update to database."""
@@ -500,20 +517,6 @@ class TrimmerMonitorApp:
                         self.cycle_id = int(current_time * 1000)
                         self.last_state_change = current_time
                         
-                        try:
-                            if getattr(self.db, "_conn", None):
-                                current_lot = self.db.get_current_req_lot(self.trimmer_id)
-                                self.db.log_event(
-                                  machine_id=self.machine_id,
-                                  trimmer_id=self.trimmer_id,
-                                  event_type="placed_in",
-                                  cycle_id=self.cycle_id,
-                                  req_lot=current_lot,
-                                  area=area
-                                )
-                        except Exception as e:
-                            print(f"DB error logging placed_in: {e}")
-                        
                         msg = f"PLACED - Cycle {self.cycle_id}"
                         print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
                         self.add_event_log(msg)
@@ -526,21 +529,22 @@ class TrimmerMonitorApp:
                         self.state_start_time = current_time
                         self.last_state_change = current_time
                         
-                        # Log missed placement event
-                        try:
-                            if getattr(self.db, "_conn", None):
-                                current_lot = self.db.get_current_req_lot(self.trimmer_id)
-                                self.db.log_event(
-                                  machine_id=self.machine_id,
-                                  trimmer_id=self.trimmer_id,
-                                  event_type="miss_placement",
-                                  cycle_id=self.cycle_id,
-                                  req_lot=current_lot,
-                                  area=area,
-                                  details=f"consecutive_misses:{self.missed_placements}"
-                                )
-                        except Exception as e:
-                            print(f"DB error logging miss_placement: {e}")
+                        # Only log miss_placement event when >= 3 consecutive (reduces noise)
+                        if self.missed_placements >= 3:
+                            try:
+                                if getattr(self.db, "_conn", None):
+                                    current_lot = self.get_cached_lot()
+                                    self.db.log_event(
+                                      machine_id=self.machine_id,
+                                      trimmer_id=self.trimmer_id,
+                                      event_type="miss_placement",
+                                      cycle_id=self.cycle_id,
+                                      req_lot=current_lot,
+                                      area=area,
+                                      details=f"consecutive_misses:{self.missed_placements}"
+                                    )
+                            except Exception as e:
+                                print(f"DB error logging miss_placement: {e}")
                         
                         # Update error state based on consecutive misses
                         if self.missed_placements >= 5:
@@ -587,23 +591,15 @@ class TrimmerMonitorApp:
                         
                         try:
                             if getattr(self.db, "_conn", None):
-                                current_lot = self.db.get_current_req_lot(self.trimmer_id)
-                                self.db.log_event(
-                                  machine_id=self.machine_id,
-                                  trimmer_id=self.trimmer_id,
-                                  event_type="pushed_out",
-                                  cycle_id=self.cycle_id,
-                                  req_lot=current_lot,
-                                  area=area,
-                                  details=f"duration_sec:{cycle_duration:.2f}"
-                                )
-                                
+                                current_lot = self.get_cached_lot()
+                                # Single CYCLE event with all data (replaces placed_in + pushed_out + CYCLE)
                                 self.db.log_event(
                                   machine_id=self.machine_id,
                                   trimmer_id=self.trimmer_id,
                                   event_type="CYCLE",
                                   cycle_id=self.cycle_id,
                                   req_lot=current_lot,
+                                  area=area,
                                   details=f"cycle_time_sec:{cycle_duration:.2f}"
                                 )
                                 # Persist trimmed count per lot
@@ -629,8 +625,8 @@ class TrimmerMonitorApp:
                 else:
                     self.machine_status = "INACTIVE"
                 
-                # Send periodic telemetry more frequently for near real-time dashboard
-                if current_time - self.last_telemetry >= 10:
+                # Send periodic telemetry every 60s (heartbeat handles online status)
+                if current_time - self.last_telemetry >= 60:
                     self.send_telemetry()
                 
                 time.sleep(0.1)
@@ -672,17 +668,8 @@ class TrimmerMonitorApp:
             hour_ago = time.time() - 3600
             cycles_in_hour = [t for t in self.cycles_last_hour if t > hour_ago]
             
-            # Fetch current lot outside of lock
-            current_lot = None
-            try:
-                if getattr(self.db, "_conn", None):
-                    current_lot = self.db.get_current_req_lot(self.trimmer_id)
-                else:
-                    # No DB connection; report no lot without spamming errors
-                    current_lot = None
-            except Exception as e:
-                print(f"Error fetching current lot: {e}")
-                current_lot = None
+            # Use cached lot (refreshed every 60s)
+            current_lot = self.get_cached_lot()
             
             with self.frame_lock:
                 return jsonify({

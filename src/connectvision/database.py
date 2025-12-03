@@ -67,12 +67,39 @@ class ConnectVisionDB:
                 user=self.config.user,
                 password=self.config.password,
                 database=self.config.database,
-                autocommit=False,
+                autocommit=True,
+                pool_reset_session=True,
+                connection_timeout=10,
             )
             print(f"Connected to MySQL: {self.config.host}:{self.config.port}/{self.config.database}")
         except Error as e:
             print(f"MySQL connection failed: {e}")
             self._conn = None
+    
+    def _ensure_connection(self) -> bool:
+        """Check connection and reconnect if needed."""
+        if not MYSQL_AVAILABLE:
+            return False
+        try:
+            if self._conn and self._conn.is_connected():
+                return True
+            else:
+                print("MySQL connection lost, reconnecting...")
+                self._connect()
+                return self._conn is not None and self._conn.is_connected()
+        except:
+            print("MySQL connection check failed, reconnecting...")
+            self._connect()
+            return self._conn is not None
+    
+    def reconnect(self):
+        """Manually reconnect to database."""
+        if self._conn:
+            try:
+                self._conn.close()
+            except:
+                pass
+        self._connect()
     
     def register_device(self, machine_id: int, device_id: str, 
                        hostname: Optional[str] = None, 
@@ -89,7 +116,7 @@ class ConnectVisionDB:
         Returns:
             True if successful, False otherwise
         """
-        if not self._conn:
+        if not self._ensure_connection():
             print(f"(stub) register_device: machine_id={machine_id}, device_id={device_id}")
             return False
         
@@ -113,18 +140,16 @@ class ConnectVisionDB:
                 WHERE machineID = %s
             """
             cursor.execute(sql, (device_id, ip_address, machine_id))
-            self._conn.commit()
             cursor.close()
             print(f"Registered device {device_id} for machine {machine_id}")
             return True
         except Error as e:
             print(f"register_device error: {e}")
-            self._conn.rollback()
             return False
     
     def get_machine_by_device(self, device_id: str) -> Optional[int]:
         """Get machine ID assigned to this device."""
-        if not self._conn:
+        if not self._ensure_connection():
             return None
         try:
             cursor = self._conn.cursor()
@@ -148,18 +173,16 @@ class ConnectVisionDB:
         Returns:
             True if successful, False otherwise
         """
-        if not self._conn:
+        if not self._ensure_connection():
             return False
         try:
             cursor = self._conn.cursor()
             sql = "UPDATE secondary_machines SET last_seen = NOW() WHERE machineID = %s"
             cursor.execute(sql, (machine_id,))
-            self._conn.commit()
             cursor.close()
             return True
         except Error as e:
             print(f"heartbeat error: {e}")
-            self._conn.rollback()
             return False
     
     def load_trimmer_config(self, machine_id: int) -> Optional[TrimmerConfig]:
@@ -232,13 +255,11 @@ class ConnectVisionDB:
                 config.roi_x, config.roi_y, config.roi_w, config.roi_h,
                 config.threshold, config.min_area, config.machine_id
             ))
-            self._conn.commit()
             cursor.close()
             print(f"Saved config for machine {config.machine_id}")
             return True
         except Error as e:
             print(f"save_trimmer_config error: {e}")
-            self._conn.rollback()
             return False
     
     def log_event(self, machine_id: int, trimmer_id: int, event_type: str, 
@@ -261,7 +282,7 @@ class ConnectVisionDB:
         Returns:
             Event ID if successful, None otherwise
         """
-        if not self._conn:
+        if not self._ensure_connection():
             print(f"(stub) log_event: {event_type} on machine {machine_id} (trimmer {trimmer_id})")
             return None
         try:
@@ -284,13 +305,11 @@ class ConnectVisionDB:
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
             """
             cursor.execute(sql, (trimmer_id, machine_id, event_type, cycle_id, req_lot, area, details))
-            self._conn.commit()
             event_id = cursor.lastrowid
             cursor.close()
             return event_id
         except Error as e:
             print(f"log_event error: {e}")
-            self._conn.rollback()
             return None
     
     def log_telemetry(self, machine_id: int, trimmer_id: int, cycles_last_hour: int,
@@ -315,7 +334,7 @@ class ConnectVisionDB:
         Returns:
             True if successful, False otherwise
         """
-        if not self._conn:
+        if not self._ensure_connection():
             print(f"(stub) log_telemetry: machine {machine_id} (trimmer {trimmer_id}), conn={connection_status}, status={machine_status}")
             return False
         try:
@@ -327,20 +346,17 @@ class ConnectVisionDB:
             """
             cursor.execute(sql, (trimmer_id, machine_id, cycles_last_hour, uptime_seconds, 
                                 connection_status, machine_status, error_code, error_text))
-            self._conn.commit()
             cursor.close()
             
             # Also update last_seen in secondary_machines (redundant with heartbeat but keeps telemetry self-contained)
             cursor = self._conn.cursor()
             sql = "UPDATE secondary_machines SET last_seen = NOW() WHERE machineID = %s"
             cursor.execute(sql, (machine_id,))
-            self._conn.commit()
             cursor.close()
             
             return True
         except Error as e:
             print(f"log_telemetry error: {e}")
-            self._conn.rollback()
             return False
 
     def get_current_req_lot(self, trimmer_id: int) -> Optional[str]:
@@ -348,7 +364,7 @@ class ConnectVisionDB:
 
         Returns the lot string if present, else None. This does not modify any lot data.
         """
-        if not self._conn:
+        if not self._ensure_connection():
             return None
         try:
             cursor = self._conn.cursor()
@@ -370,7 +386,7 @@ class ConnectVisionDB:
         Table expected: mfgreq_trim(reqLot VARCHAR, trimmer_id INT, trimmed_qty INT, last_updated DATETIME)
         With unique key on (reqLot, trimmer_id).
         """
-        if not self._conn or not req_lot:
+        if not self._ensure_connection() or not req_lot:
             return False
         try:
             cursor = self._conn.cursor()
@@ -380,12 +396,10 @@ class ConnectVisionDB:
                 "ON DUPLICATE KEY UPDATE trimmed_qty = trimmed_qty + VALUES(trimmed_qty), last_updated = NOW()"
             )
             cursor.execute(sql, (req_lot, trimmer_id, qty))
-            self._conn.commit()
             cursor.close()
             return True
         except Error as e:
             print(f"increment_trimmed_qty error: {e}")
-            self._conn.rollback()
             return False
     
     def close(self):
