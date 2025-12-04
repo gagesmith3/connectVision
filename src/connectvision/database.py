@@ -89,10 +89,24 @@ class ConnectVisionDB:
                 return True
             else:
                 print("MySQL connection lost, reconnecting...")
+                # Force close and reset before reconnecting
+                if self._conn:
+                    try:
+                        self._conn.close()
+                    except:
+                        pass
+                    self._conn = None
                 self._connect()
                 return self._conn is not None and self._conn.is_connected()
-        except:
-            print("MySQL connection check failed, reconnecting...")
+        except Exception as e:
+            print(f"MySQL connection check failed: {e}")
+            # Force close and reset on error
+            if self._conn:
+                try:
+                    self._conn.close()
+                except:
+                    pass
+                self._conn = None
             self._connect()
             return self._conn is not None
     
@@ -388,18 +402,6 @@ class ConnectVisionDB:
             """
             cursor.execute(sql, (trimmer_id, machine_id, cycles_last_hour, uptime_seconds, 
                                 connection_status, machine_status, error_code, error_text))
-            
-            # Also update last_seen in secondary_machines (redundant with heartbeat but keeps telemetry self-contained)
-            cursor2 = self._conn.cursor()
-            try:
-                sql2 = "UPDATE secondary_machines SET last_seen = NOW() WHERE machineID = %s"
-                cursor2.execute(sql2, (machine_id,))
-            finally:
-                try:
-                    cursor2.close()
-                except:
-                    pass
-            
             return True
         except Error as e:
             print(f"log_telemetry error: {e}")
