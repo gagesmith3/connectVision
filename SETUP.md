@@ -13,6 +13,8 @@ python3 scripts/trimmer_monitor_v2.py
 
 The app now reads configuration from `.env` automatically. CLI arguments still override `.env` values when provided.
 
+The web status endpoint (`/status`) reports selected camera/AF settings at runtime (`camera_mode`, `camera_resolution`, `camera_fps_target`, `af_mode`, `lens_position`).
+
 ## Environment Variables
 
 | Variable | Example | Description |
@@ -25,7 +27,7 @@ The app now reads configuration from `.env` automatically. CLI arguments still o
 | `DB_PASSWORD` | `your_password` | MySQL password |
 | `DB_NAME` | `iwt_db` | Database name |
 | `WEB_PORT` | `8080` | Flask web UI port |
-| `CAMERA_MODE` | `1080p30` | Camera preset: `1080p30`, `720p60`, `custom` |
+| `CAMERA_MODE` | `720p60` | Camera preset: `1080p30`, `720p60`, `custom` |
 | `CAMERA_WIDTH` | `1920` | Camera frame width |
 | `CAMERA_HEIGHT` | `1080` | Camera frame height |
 | `CAMERA_FPS` | `30` | Target FPS (used with `CAMERA_MODE=custom`) |

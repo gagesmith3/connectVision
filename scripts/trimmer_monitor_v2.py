@@ -342,6 +342,7 @@ class TrimmerMonitorApp:
         frame_width: int = 640,
         frame_height: int = 480,
         camera_fps: int = 30,
+        camera_mode: str = "720p60",
         af_mode: str = "continuous",
         lens_position: Optional[float] = None,
     ):
@@ -352,6 +353,7 @@ class TrimmerMonitorApp:
         self.frame_width = frame_width
         self.frame_height = frame_height
         self.camera_fps = camera_fps
+        self.camera_mode = camera_mode
         self.af_mode = af_mode.lower()
         self.lens_position = lens_position
         
@@ -778,6 +780,9 @@ class TrimmerMonitorApp:
                     'time_in_state': int(time.time() - self.state_start_time),
                     'camera_resolution': f"{self.frame_width}x{self.frame_height}",
                     'camera_fps_target': self.camera_fps,
+                    'camera_mode': self.camera_mode,
+                    'af_mode': self.af_mode,
+                    'lens_position': self.lens_position,
                 })
         
         @self.app.route('/events')
@@ -890,7 +895,7 @@ class TrimmerMonitorApp:
 
 def main():
     def resolve_camera_profile(mode: str, width: int, height: int, fps: int):
-        mode = (mode or "1080p30").lower()
+        mode = (mode or "720p60").lower()
         if mode == "1080p30":
             return 1920, 1080, 30
         if mode == "720p60":
@@ -926,7 +931,7 @@ def main():
                        help="Database name")
     parser.add_argument("--port", type=int, default=int(os.getenv("WEB_PORT", "8080")),
                        help="Web interface port")
-    parser.add_argument("--camera-mode", type=str, default=os.getenv("CAMERA_MODE", "1080p30"),
+    parser.add_argument("--camera-mode", type=str, default=os.getenv("CAMERA_MODE", "720p60"),
                choices=["1080p30", "720p60", "custom"],
                help="Camera profile preset")
     parser.add_argument("--camera-width", type=int, default=int(os.getenv("CAMERA_WIDTH", "1920")),
@@ -990,6 +995,7 @@ def main():
         frame_width=frame_width,
         frame_height=frame_height,
         camera_fps=camera_fps,
+      camera_mode=args.camera_mode,
         af_mode=args.af_mode,
         lens_position=args.lens_position,
     )

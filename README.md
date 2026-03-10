@@ -32,6 +32,13 @@ What it does:
 Default web UI:
 - `http://<pi-ip>:8080`
 
+Status API (`/status`) includes camera/runtime metadata:
+- `camera_mode`
+- `camera_resolution`
+- `camera_fps_target`
+- `af_mode`
+- `lens_position`
+
 ## Configuration
 
 `trimmer_monitor_v2.py` loads `.env` automatically (if present).
