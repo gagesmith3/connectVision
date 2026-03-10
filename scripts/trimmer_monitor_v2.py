@@ -14,6 +14,7 @@ import argparse
 import sys
 import threading
 import json
+import os
 import socket
 from pathlib import Path
 from typing import Optional
@@ -25,6 +26,16 @@ import cv2
 import numpy as np
 from picamera2 import Picamera2
 from flask import Flask, Response, render_template_string, request, jsonify
+
+try:
+    from libcamera import controls as libcamera_controls
+except Exception:
+    libcamera_controls = None
+
+try:
+    from dotenv import load_dotenv
+except Exception:
+    load_dotenv = None
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -101,10 +112,10 @@ HTML_TEMPLATE = """
     </div>
     <div style="margin-top:10px;">
       <label>ROI (x,y,w,h):</label>
-      <input type="number" id="roi-x" value="{{ roi_x }}" min="0" max="640"> 
-      <input type="number" id="roi-y" value="{{ roi_y }}" min="0" max="480"> 
-      <input type="number" id="roi-w" value="{{ roi_w }}" min="10" max="640"> 
-      <input type="number" id="roi-h" value="{{ roi_h }}" min="10" max="480">
+      <input type="number" id="roi-x" value="{{ roi_x }}" min="0" max="{{ frame_width }}"> 
+      <input type="number" id="roi-y" value="{{ roi_y }}" min="0" max="{{ frame_height }}"> 
+      <input type="number" id="roi-w" value="{{ roi_w }}" min="10" max="{{ frame_width }}"> 
+      <input type="number" id="roi-h" value="{{ roi_h }}" min="10" max="{{ frame_height }}">
       <button onclick="updateROI()">Update ROI</button>
     </div>
     <div style="margin-top:10px;">
@@ -222,8 +233,8 @@ function reloadConfig() {
 
 function startDrag(e) {
   const rect = e.target.getBoundingClientRect();
-  const scaleX = 640 / rect.width;
-  const scaleY = 480 / rect.height;
+  const scaleX = {{ frame_width }} / rect.width;
+  const scaleY = {{ frame_height }} / rect.height;
   startX = Math.round((e.clientX - rect.left) * scaleX);
   startY = Math.round((e.clientY - rect.top) * scaleY);
   dragging = true;
@@ -232,8 +243,8 @@ function startDrag(e) {
 function dragROI(e) {
   if (!dragging) return;
   const rect = e.target.getBoundingClientRect();
-  const scaleX = 640 / rect.width;
-  const scaleY = 480 / rect.height;
+  const scaleX = {{ frame_width }} / rect.width;
+  const scaleY = {{ frame_height }} / rect.height;
   const endX = Math.round((e.clientX - rect.left) * scaleX);
   const endY = Math.round((e.clientY - rect.top) * scaleY);
   
@@ -323,11 +334,26 @@ class TrimmerState(Enum):
 class TrimmerMonitorApp:
     """Integrated trimmer monitor with web interface."""
     
-    def __init__(self, machine_id: int, db: ConnectVisionDB, config: TrimmerConfig):
+    def __init__(
+        self,
+        machine_id: int,
+        db: ConnectVisionDB,
+        config: TrimmerConfig,
+        frame_width: int = 640,
+        frame_height: int = 480,
+        camera_fps: int = 30,
+        af_mode: str = "continuous",
+        lens_position: Optional[float] = None,
+    ):
         self.machine_id = machine_id
         self.trimmer_id = int(config.machine_name) if config.machine_name.isdigit() else 0
         self.db = db
         self.config = config
+        self.frame_width = frame_width
+        self.frame_height = frame_height
+        self.camera_fps = camera_fps
+        self.af_mode = af_mode.lower()
+        self.lens_position = lens_position
         
         # State tracking
         self.state = TrimmerState.EMPTY
@@ -365,13 +391,18 @@ class TrimmerMonitorApp:
         self.last_jpeg = None
         self.last_area = 0
         self.last_present = False
+
+        # Ensure ROI is valid for the current capture resolution.
+        self._clamp_roi_to_frame()
         
         # Initialize camera
         self.picam2 = Picamera2()
         camera_config = self.picam2.create_preview_configuration(
-            main={"size": (640, 480)}
+          main={"size": (self.frame_width, self.frame_height)},
+          controls={"FrameRate": float(self.camera_fps)},
         )
         self.picam2.configure(camera_config)
+        self._configure_focus()
         self.picam2.start()
         time.sleep(1)
         
@@ -383,7 +414,68 @@ class TrimmerMonitorApp:
         self.running = False
         self.monitor_thread = None
         
-        print(f"TrimmerMonitorApp initialized: Machine {machine_id}, Trimmer {self.trimmer_id} ({config.machine_name})")
+        print(
+            f"TrimmerMonitorApp initialized: Machine {machine_id}, Trimmer {self.trimmer_id} "
+            f"({config.machine_name}), Resolution {self.frame_width}x{self.frame_height}@{self.camera_fps}fps, "
+            f"AF mode {self.af_mode}"
+        )
+
+    def _clamp_roi_to_frame(self):
+        """Clamp ROI to current frame bounds and enforce minimum dimensions."""
+        x = max(0, int(self.config.roi_x))
+        y = max(0, int(self.config.roi_y))
+        w = max(10, int(self.config.roi_w))
+        h = max(10, int(self.config.roi_h))
+
+        if x >= self.frame_width:
+            x = max(0, self.frame_width - 10)
+        if y >= self.frame_height:
+            y = max(0, self.frame_height - 10)
+
+        w = min(w, self.frame_width - x)
+        h = min(h, self.frame_height - y)
+
+        self.config.roi_x = x
+        self.config.roi_y = y
+        self.config.roi_w = max(10, w)
+        self.config.roi_h = max(10, h)
+
+    def _configure_focus(self):
+        """Apply autofocus/manual focus controls when supported by camera stack."""
+        af_mode = self.af_mode
+        mode_map = {
+            "manual": 0,
+            "off": 0,
+            "auto": 1,
+            "continuous": 2,
+        }
+
+        controls = {}
+        if libcamera_controls is not None:
+            mode_map = {
+                "manual": libcamera_controls.AfModeEnum.Manual,
+                "off": libcamera_controls.AfModeEnum.Manual,
+                "auto": libcamera_controls.AfModeEnum.Auto,
+                "continuous": libcamera_controls.AfModeEnum.Continuous,
+            }
+
+        if af_mode not in mode_map:
+            print(f"Unknown AF mode '{af_mode}', defaulting to continuous")
+            af_mode = "continuous"
+
+        controls["AfMode"] = mode_map[af_mode]
+
+        if af_mode in ("manual", "off") and self.lens_position is not None:
+            controls["LensPosition"] = float(self.lens_position)
+
+        try:
+            self.picam2.set_controls(controls)
+            msg = f"Camera focus configured: mode={af_mode}"
+            if "LensPosition" in controls:
+                msg += f", lens={controls['LensPosition']}"
+            print(msg)
+        except Exception as e:
+            print(f"WARNING: Could not apply focus controls ({e})")
     
     def get_cached_lot(self) -> Optional[str]:
         """Get current lot from cache, refresh if stale."""
@@ -448,7 +540,7 @@ class TrimmerMonitorApp:
         # Extract ROI
         x, y, w, h = (self.config.roi_x, self.config.roi_y,
                       self.config.roi_w, self.config.roi_h)
-        roi_frame = frame[y:y+h, x:x+w] if (y+h <= 480 and x+w <= 640) else frame
+        roi_frame = frame[y:y+h, x:x+w] if (y+h <= self.frame_height and x+w <= self.frame_width) else frame
         
         # Detect presence
         gray = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2GRAY)
@@ -648,7 +740,9 @@ class TrimmerMonitorApp:
                 roi_w=self.config.roi_w,
                 roi_h=self.config.roi_h,
                 threshold=self.config.threshold,
-                min_area=self.config.min_area
+                min_area=self.config.min_area,
+                frame_width=self.frame_width,
+                frame_height=self.frame_height,
             )
         
         @self.app.route('/stream')
@@ -681,7 +775,9 @@ class TrimmerMonitorApp:
                     'uptime': int(time.time() - self.boot_time),
                     'connection_status': 'ONLINE',
                     'machine_status': self.machine_status,
-                    'time_in_state': int(time.time() - self.state_start_time)
+                    'time_in_state': int(time.time() - self.state_start_time),
+                    'camera_resolution': f"{self.frame_width}x{self.frame_height}",
+                    'camera_fps_target': self.camera_fps,
                 })
         
         @self.app.route('/events')
@@ -695,6 +791,7 @@ class TrimmerMonitorApp:
             self.config.roi_y = int(data['y'])
             self.config.roi_w = int(data['w'])
             self.config.roi_h = int(data['h'])
+            self._clamp_roi_to_frame()
             return jsonify({'ok': True})
         
         @self.app.route('/set_threshold', methods=['POST'])
@@ -709,46 +806,49 @@ class TrimmerMonitorApp:
         
         @self.app.route('/save_config', methods=['POST'])
         def save_config():
-          try:
-            print(f"Saving config: Machine {self.config.machine_id}, ROI=[{self.config.roi_x},{self.config.roi_y},{self.config.roi_w},{self.config.roi_h}], Threshold={self.config.threshold}, MinArea={self.config.min_area}")
-            success = False
-            if getattr(self.db, "_conn", None):
-              success = self.db.save_trimmer_config(self.config)
-            else:
-              raise RuntimeError("MySQL connection not available")
-            print(f"Save result: {success}")
-            return jsonify({'ok': success})
-          except Exception as e:
-            msg = str(e)
-            print(f"Error saving config: {msg}")
-            # Attempt a lightweight reconnect then retry once
             try:
-              reconnect = getattr(self.db, 'reconnect', None)
-              if callable(reconnect):
-                reconnect()
+                print(f"Saving config: Machine {self.config.machine_id}, ROI=[{self.config.roi_x},{self.config.roi_y},{self.config.roi_w},{self.config.roi_h}], Threshold={self.config.threshold}, MinArea={self.config.min_area}")
+                success = False
                 if getattr(self.db, "_conn", None):
-                  print("Retrying save after reconnect...")
-                  success = self.db.save_trimmer_config(self.config)
-                  return jsonify({'ok': success})
-            except Exception as e2:
-              print(f"Reconnect attempt failed: {e2}")
-            return jsonify({'ok': False, 'error': msg})
+                    success = self.db.save_trimmer_config(self.config)
+                else:
+                    raise RuntimeError("MySQL connection not available")
+                print(f"Save result: {success}")
+                return jsonify({'ok': success})
+            except Exception as e:
+                msg = str(e)
+                print(f"Error saving config: {msg}")
+                # Attempt a lightweight reconnect then retry once
+                try:
+                    reconnect = getattr(self.db, 'reconnect', None)
+                    if callable(reconnect):
+                        reconnect()
+                        if getattr(self.db, "_conn", None):
+                            print("Retrying save after reconnect...")
+                            success = self.db.save_trimmer_config(self.config)
+                            return jsonify({'ok': success})
+                except Exception as e2:
+                    print(f"Reconnect attempt failed: {e2}")
+                return jsonify({'ok': False, 'error': msg})
         
         @self.app.route('/reload_config', methods=['POST'])
         def reload_config():
-            new_config = self.db.load_trimmer_config(self.machine_id)
-            if new_config:
-                self.config = new_config
-                return jsonify({
-                    'ok': True,
-                    'roi_x': new_config.roi_x,
-                    'roi_y': new_config.roi_y,
-                    'roi_w': new_config.roi_w,
-                    'roi_h': new_config.roi_h,
-                    'threshold': new_config.threshold,
-                    'min_area': new_config.min_area
-                })
-            return jsonify({'ok': False})
+          new_config = self.db.load_trimmer_config(self.machine_id)
+          if new_config:
+            self.config = new_config
+            self._clamp_roi_to_frame()
+            return jsonify(
+              {
+                'ok': True,
+                'roi_x': new_config.roi_x,
+                'roi_y': new_config.roi_y,
+                'roi_w': new_config.roi_w,
+                'roi_h': new_config.roi_h,
+                'threshold': new_config.threshold,
+                'min_area': new_config.min_area,
+              }
+            )
+          return jsonify({'ok': False})
     
     def start(self, port=8080):
         """Start the monitoring and web server."""
@@ -789,27 +889,64 @@ class TrimmerMonitorApp:
 
 
 def main():
+    def resolve_camera_profile(mode: str, width: int, height: int, fps: int):
+        mode = (mode or "1080p30").lower()
+        if mode == "1080p30":
+            return 1920, 1080, 30
+        if mode == "720p60":
+            return 1280, 720, 60
+        # custom mode uses explicit width/height/fps values
+        return max(320, width), max(240, height), max(1, fps)
+
+    # Load optional .env config from repo root for quick deployments.
+    if load_dotenv:
+        load_dotenv(Path(__file__).parent.parent / ".env")
+
+    env_machine_id = os.getenv("MACHINE_ID")
+
     parser = argparse.ArgumentParser(
         description="Trimmer Monitor with Integrated Web Interface"
     )
-    parser.add_argument("--machine-id", type=int, required=True,
+    parser.add_argument("--machine-id", type=int,
+                       default=int(env_machine_id) if env_machine_id else None,
+                       required=env_machine_id is None,
                        help="Machine ID from secondary_machines table")
     parser.add_argument("--device-id", type=str,
+                       default=os.getenv("DEVICE_ID"),
                        help="Unique Pi device identifier (default: hostname)")
-    parser.add_argument("--db-host", type=str, default="192.168.1.6",
+    parser.add_argument("--db-host", type=str, default=os.getenv("DB_HOST", "192.168.1.6"),
                        help="Database host")
-    parser.add_argument("--db-port", type=int, default=3306,
+    parser.add_argument("--db-port", type=int, default=int(os.getenv("DB_PORT", "3306")),
                        help="Database port")
-    parser.add_argument("--db-user", type=str, default="webapp",
+    parser.add_argument("--db-user", type=str, default=os.getenv("DB_USER", "webapp"),
                        help="Database user")
-    parser.add_argument("--db-password", type=str, default="STUDS2650",
+    parser.add_argument("--db-password", type=str, default=os.getenv("DB_PASSWORD", "STUDS2650"),
                        help="Database password")
-    parser.add_argument("--db-name", type=str, default="iwt_db",
+    parser.add_argument("--db-name", type=str, default=os.getenv("DB_NAME", "iwt_db"),
                        help="Database name")
-    parser.add_argument("--port", type=int, default=8080,
+    parser.add_argument("--port", type=int, default=int(os.getenv("WEB_PORT", "8080")),
                        help="Web interface port")
+    parser.add_argument("--camera-mode", type=str, default=os.getenv("CAMERA_MODE", "1080p30"),
+               choices=["1080p30", "720p60", "custom"],
+               help="Camera profile preset")
+    parser.add_argument("--camera-width", type=int, default=int(os.getenv("CAMERA_WIDTH", "1920")),
+               help="Camera frame width")
+    parser.add_argument("--camera-height", type=int, default=int(os.getenv("CAMERA_HEIGHT", "1080")),
+               help="Camera frame height")
+    parser.add_argument("--camera-fps", type=int, default=int(os.getenv("CAMERA_FPS", "30")),
+           help="Target camera frames per second (used with --camera-mode custom)")
+    parser.add_argument("--af-mode", type=str, default=os.getenv("AF_MODE", "continuous"),
+               choices=["manual", "off", "auto", "continuous"],
+               help="Autofocus mode")
+    parser.add_argument("--lens-position", type=float,
+               default=float(os.getenv("LENS_POSITION")) if os.getenv("LENS_POSITION") else None,
+               help="Manual lens position when AF mode is manual/off")
     
     args = parser.parse_args()
+
+    frame_width, frame_height, camera_fps = resolve_camera_profile(
+        args.camera_mode, args.camera_width, args.camera_height, args.camera_fps
+    )
     
     # Get device ID
     device_id = args.device_id or socket.gethostname()
@@ -849,7 +986,12 @@ def main():
     app = TrimmerMonitorApp(
         machine_id=args.machine_id,
         db=db,
-        config=config
+        config=config,
+        frame_width=frame_width,
+        frame_height=frame_height,
+        camera_fps=camera_fps,
+        af_mode=args.af_mode,
+        lens_position=args.lens_position,
     )
     
     app.start(port=args.port)
