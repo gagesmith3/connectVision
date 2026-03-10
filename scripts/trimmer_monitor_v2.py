@@ -913,8 +913,12 @@ class TrimmerMonitorApp:
 def main():
     def resolve_camera_profile(mode: str, width: int, height: int, fps: int):
         mode = (mode or "720p60").lower()
+        if mode == "1080p60":
+            return 1920, 1080, 60
         if mode == "1080p30":
             return 1920, 1080, 30
+        if mode == "720p80":
+            return 1280, 720, 80
         if mode == "720p60":
             return 1280, 720, 60
         # custom mode uses explicit width/height/fps values
@@ -951,8 +955,8 @@ def main():
     parser.add_argument("--camera-index", type=int, default=int(os.getenv("CAMERA_INDEX", "0")),
                help="Camera index from libcamera list")
     parser.add_argument("--camera-mode", type=str, default=os.getenv("CAMERA_MODE", "720p60"),
-               choices=["1080p30", "720p60", "custom"],
-               help="Camera profile preset")
+               choices=["1080p60", "1080p30", "720p80", "720p60", "custom"],
+               help="Camera profile preset (IMX519: 1080p60, 720p80 are native modes)")
     parser.add_argument("--camera-width", type=int, default=int(os.getenv("CAMERA_WIDTH", "1920")),
                help="Camera frame width")
     parser.add_argument("--camera-height", type=int, default=int(os.getenv("CAMERA_HEIGHT", "1080")),
