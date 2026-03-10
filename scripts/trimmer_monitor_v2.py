@@ -339,6 +339,7 @@ class TrimmerMonitorApp:
         machine_id: int,
         db: ConnectVisionDB,
         config: TrimmerConfig,
+      camera_index: int = 0,
         frame_width: int = 640,
         frame_height: int = 480,
         camera_fps: int = 30,
@@ -350,6 +351,7 @@ class TrimmerMonitorApp:
         self.trimmer_id = int(config.machine_name) if config.machine_name.isdigit() else 0
         self.db = db
         self.config = config
+        self.camera_index = camera_index
         self.frame_width = frame_width
         self.frame_height = frame_height
         self.camera_fps = camera_fps
@@ -398,7 +400,21 @@ class TrimmerMonitorApp:
         self._clamp_roi_to_frame()
         
         # Initialize camera
-        self.picam2 = Picamera2()
+        available_cameras = Picamera2.global_camera_info()
+        if not available_cameras:
+          raise RuntimeError(
+            "No camera detected by libcamera. Check camera cable seating, enable camera interfaces, "
+            "and reboot. Test with: libcamera-hello --list-cameras"
+          )
+
+        if self.camera_index < 0 or self.camera_index >= len(available_cameras):
+          raise RuntimeError(
+            f"Camera index {self.camera_index} is out of range. "
+            f"Detected cameras: {len(available_cameras)}. "
+            "Set CAMERA_INDEX in .env or use --camera-index."
+          )
+
+        self.picam2 = Picamera2(camera_num=self.camera_index)
         camera_config = self.picam2.create_preview_configuration(
           main={"size": (self.frame_width, self.frame_height)},
           controls={"FrameRate": float(self.camera_fps)},
@@ -418,7 +434,8 @@ class TrimmerMonitorApp:
         
         print(
             f"TrimmerMonitorApp initialized: Machine {machine_id}, Trimmer {self.trimmer_id} "
-            f"({config.machine_name}), Resolution {self.frame_width}x{self.frame_height}@{self.camera_fps}fps, "
+            f"({config.machine_name}), Camera index {self.camera_index}, "
+            f"Resolution {self.frame_width}x{self.frame_height}@{self.camera_fps}fps, "
             f"AF mode {self.af_mode}"
         )
 
@@ -931,6 +948,8 @@ def main():
                        help="Database name")
     parser.add_argument("--port", type=int, default=int(os.getenv("WEB_PORT", "8080")),
                        help="Web interface port")
+    parser.add_argument("--camera-index", type=int, default=int(os.getenv("CAMERA_INDEX", "0")),
+               help="Camera index from libcamera list")
     parser.add_argument("--camera-mode", type=str, default=os.getenv("CAMERA_MODE", "720p60"),
                choices=["1080p30", "720p60", "custom"],
                help="Camera profile preset")
@@ -992,10 +1011,11 @@ def main():
         machine_id=args.machine_id,
         db=db,
         config=config,
+        camera_index=args.camera_index,
         frame_width=frame_width,
         frame_height=frame_height,
         camera_fps=camera_fps,
-      camera_mode=args.camera_mode,
+        camera_mode=args.camera_mode,
         af_mode=args.af_mode,
         lens_position=args.lens_position,
     )

@@ -52,6 +52,7 @@ Key `.env` values:
 - `DB_PASSWORD`
 - `DB_NAME`
 - `WEB_PORT`
+- `CAMERA_INDEX`
 
 CLI arguments still override `.env` values.
 

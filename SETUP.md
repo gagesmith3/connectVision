@@ -28,6 +28,7 @@ The web status endpoint (`/status`) reports selected camera/AF settings at runti
 | `DB_NAME` | `iwt_db` | Database name |
 | `WEB_PORT` | `8080` | Flask web UI port |
 | `CAMERA_MODE` | `720p60` | Camera preset: `1080p30`, `720p60`, `custom` |
+| `CAMERA_INDEX` | `0` | Camera index from libcamera camera list |
 | `CAMERA_WIDTH` | `1920` | Camera frame width |
 | `CAMERA_HEIGHT` | `1080` | Camera frame height |
 | `CAMERA_FPS` | `30` | Target FPS (used with `CAMERA_MODE=custom`) |
@@ -101,4 +102,24 @@ sudo systemctl daemon-reload
 sudo systemctl enable trimmer-monitor
 sudo systemctl start trimmer-monitor
 sudo systemctl status trimmer-monitor
+```
+
+## Camera Troubleshooting
+
+If startup says no camera was detected:
+
+```bash
+libcamera-hello --list-cameras
+```
+
+If multiple cameras are listed, select index in `.env`:
+
+```env
+CAMERA_INDEX=0
+```
+
+Or via CLI:
+
+```bash
+python3 scripts/trimmer_monitor_v2.py --camera-index 0
 ```
