@@ -129,7 +129,41 @@ HTML_TEMPLATE = """
       <button onclick="updateMinArea()">Update</button>
     </div>
     <div style="margin-top:15px;">
-      <button onclick="saveToDatabase()" style="background:#00a;">💾 Save to Database</button>
+      <button onclick="saveToDatabase()" style="background:#00a;">💾 Save ROI to Database</button>
+    </div>
+  </div>
+  
+  <div class="controls">
+    <h3>Camera Settings</h3>
+    <div>
+      <label>Camera Mode:</label>
+      <select id="camera-mode" style="padding:5px; width:150px;">
+        <option value="1080p60">1080p @ 60fps</option>
+        <option value="1080p30">1080p @ 30fps</option>
+        <option value="720p80">720p @ 80fps</option>
+        <option value="720p60" selected>720p @ 60fps</option>
+        <option value="custom">Custom</option>
+      </select>
+      <button onclick="updateCameraMode()">Apply</button>
+    </div>
+    <div style="margin-top:10px;">
+      <label>AF Mode:</label>
+      <select id="af-mode" style="padding:5px; width:150px;">
+        <option value="continuous" selected>Continuous</option>
+        <option value="auto">Auto</option>
+        <option value="manual">Manual</option>
+        <option value="off">Off</option>
+      </select>
+      <button onclick="updateAFMode()">Apply</button>
+    </div>
+    <div style="margin-top:10px; display:none;" id="lens-control">
+      <label>Lens Position:</label>
+      <input type="range" id="lens-position" min="0" max="32" step="0.1" value="16" style="width:200px;" oninput="updateLensLabel(this.value)">
+      <span id="lens-val">16.0</span>
+      <button onclick="updateLensPosition()">Apply</button>
+    </div>
+    <div style="margin-top:10px; font-size:12px; color:#888;">
+      <strong>Current:</strong> <span id="camera-info">Loading...</span>
     </div>
   </div>
   
@@ -182,6 +216,67 @@ function updateThreshold(val) {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({threshold: parseInt(val)})
   });
+}
+
+function updateCameraMode() {
+  const mode = document.getElementById('camera-mode').value;
+  fetch('/camera/settings', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({camera_mode: mode})
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.ok) {
+      alert('✓ Camera mode changed to ' + mode + '. Page will refresh...');
+      setTimeout(() => location.reload(), 1000);
+    } else {
+      alert('✗ Failed to update camera mode: ' + (data.error || 'Unknown error'));
+    }
+  })
+  .catch(err => alert('✗ Network error: ' + err));
+}
+
+function updateAFMode() {
+  const mode = document.getElementById('af-mode').value;
+  fetch('/camera/settings', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({af_mode: mode})
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.ok) {
+      // Show lens control if manual mode
+      document.getElementById('lens-control').style.display = mode === 'manual' ? 'block' : 'none';
+      alert('✓ AF mode changed to ' + mode);
+    } else {
+      alert('✗ Failed to update AF mode: ' + (data.error || 'Unknown error'));
+    }
+  })
+  .catch(err => alert('✗ Network error: ' + err));
+}
+
+function updateLensLabel(val) {
+  document.getElementById('lens-val').innerText = parseFloat(val).toFixed(1);
+}
+
+function updateLensPosition() {
+  const pos = parseFloat(document.getElementById('lens-position').value);
+  fetch('/camera/settings', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({lens_position: pos})
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.ok) {
+      alert('✓ Lens position set to ' + pos);
+    } else {
+      alert('✗ Failed to update lens position: ' + (data.error || 'Unknown error'));
+    }
+  })
+  .catch(err => alert('✗ Network error: ' + err));
 }
 
 function updateMinArea() {
@@ -273,6 +368,24 @@ function formatUptime(seconds) {
   return `${hrs}:${mins.toString().padStart(2,'0')}:${secs.toString().padStart(2,'0')}`;
 }
 
+// Load camera settings on page load
+window.addEventListener('load', () => {
+  fetch('/camera/settings')
+    .then(r => r.json())
+    .then(data => {
+      if (data.camera_mode) document.getElementById('camera-mode').value = data.camera_mode;
+      if (data.af_mode) document.getElementById('af-mode').value = data.af_mode;
+      if (data.af_mode === 'manual') {
+        document.getElementById('lens-control').style.display = 'block';
+        if (data.lens_position !== null && data.lens_position !== undefined) {
+          document.getElementById('lens-position').value = data.lens_position;
+          updateLensLabel(data.lens_position);
+        }
+      }
+    })
+    .catch(err => console.error('Failed to load camera settings:', err));
+});
+
 // Poll status
 setInterval(() => {
   fetch('/status')
@@ -295,6 +408,10 @@ setInterval(() => {
       
       statusEl.className = statusClass;
       statusEl.innerText = statusText;
+      
+      // Update camera info display
+      const cameraInfo = `${data.camera_resolution} @ ${data.camera_fps_target}fps | AF: ${data.af_mode}`;
+      document.getElementById('camera-info').innerText = cameraInfo;
       
       // Update stats
       document.getElementById('total-cycles').innerText = data.total_cycles;
@@ -399,6 +516,9 @@ class TrimmerMonitorApp:
         # Ensure ROI is valid for the current capture resolution.
         self._clamp_roi_to_frame()
         
+        # Load persisted camera settings from JSON if available
+        self._load_camera_config_from_json()
+        
         # Initialize camera
         available_cameras = Picamera2.global_camera_info()
         if not available_cameras:
@@ -439,6 +559,48 @@ class TrimmerMonitorApp:
             f"AF mode {self.af_mode}"
         )
 
+    def _get_camera_config_path(self):
+        """Get path to camera config JSON file."""
+        script_dir = Path(__file__).parent
+        return script_dir / f"camera_config_{self.machine_id}.json"
+    
+    def _load_camera_config_from_json(self):
+        """Load camera settings from persisted JSON file if it exists."""
+        try:
+            config_path = self._get_camera_config_path()
+            if config_path.exists():
+                with open(config_path, 'r') as f:
+                    data = json.load(f)
+                    if 'camera_mode' in data:
+                        self.camera_mode = data['camera_mode']
+                    if 'af_mode' in data:
+                        self.af_mode = data['af_mode']
+                    if 'lens_position' in data:
+                        self.lens_position = data['lens_position']
+                    print(f"Loaded camera config from {config_path}")
+                    return True
+        except Exception as e:
+            print(f"Warning: Could not load camera config from JSON: {e}")
+        return False
+    
+    def _save_camera_config_to_json(self):
+        """Save current camera settings to JSON file for persistence."""
+        try:
+            config_path = self._get_camera_config_path()
+            config_data = {
+                'camera_mode': self.camera_mode,
+                'af_mode': self.af_mode,
+                'lens_position': self.lens_position,
+                'timestamp': datetime.now().isoformat()
+            }
+            with open(config_path, 'w') as f:
+                json.dump(config_data, f, indent=2)
+            print(f"Saved camera config to {config_path}")
+            return True
+        except Exception as e:
+            print(f"Warning: Could not save camera config to JSON: {e}")
+            return False
+
     def _clamp_roi_to_frame(self):
         """Clamp ROI to current frame bounds and enforce minimum dimensions."""
         x = max(0, int(self.config.roi_x))
@@ -458,6 +620,19 @@ class TrimmerMonitorApp:
         self.config.roi_y = y
         self.config.roi_w = max(10, w)
         self.config.roi_h = max(10, h)
+
+    def _resolve_camera_profile(self, mode: str):
+        """Resolve camera mode string to (width, height, fps) tuple."""
+        mode = (mode or "720p60").lower()
+        if mode == "1080p60":
+            return 1920, 1080, 60
+        if mode == "1080p30":
+            return 1920, 1080, 30
+        if mode == "720p80":
+            return 1280, 720, 80
+        if mode == "720p60":
+            return 1280, 720, 60
+        return 1280, 720, 60  # Default fallback
 
     def _configure_focus(self):
         """Apply autofocus/manual focus controls when supported by camera stack."""
@@ -871,6 +1046,81 @@ class TrimmerMonitorApp:
               }
             )
           return jsonify({'ok': False})
+        
+        @self.app.route('/camera/settings', methods=['GET'])
+        def get_camera_settings():
+            """Return current camera settings."""
+            return jsonify({
+                'camera_mode': self.camera_mode,
+                'camera_resolution': f"{self.frame_width}x{self.frame_height}",
+                'camera_fps_target': self.camera_fps,
+                'af_mode': self.af_mode,
+                'lens_position': self.lens_position,
+            })
+        
+        @self.app.route('/camera/settings', methods=['POST'])
+        def update_camera_settings():
+            """Update camera settings and persist to JSON."""
+            try:
+                data = request.json
+                updated = False
+                
+                # Update camera mode if provided
+                if 'camera_mode' in data:
+                    new_mode = data['camera_mode'].lower()
+                    if new_mode in ['1080p60', '1080p30', '720p80', '720p60', 'custom']:
+                        self.camera_mode = new_mode
+                        # Resolve resolution from preset
+                        w, h, fps = self._resolve_camera_profile(new_mode)
+                        self.frame_width = w
+                        self.frame_height = h
+                        self.camera_fps = fps
+                        self._clamp_roi_to_frame()
+                        # Reconfigure camera
+                        try:
+                            camera_config = self.picam2.create_preview_configuration(
+                                main={"size": (self.frame_width, self.frame_height)},
+                                controls={"FrameRate": float(self.camera_fps)},
+                            )
+                            self.picam2.configure(camera_config)
+                        except Exception as e:
+                            print(f"Warning: Camera reconfig failed: {e}")
+                        updated = True
+                    else:
+                        return jsonify({'ok': False, 'error': f'Invalid camera mode: {new_mode}'})
+                
+                # Update AF mode if provided
+                if 'af_mode' in data:
+                    new_af_mode = data['af_mode'].lower()
+                    if new_af_mode in ['manual', 'off', 'auto', 'continuous']:
+                        self.af_mode = new_af_mode
+                        self._configure_focus()
+                        updated = True
+                    else:
+                        return jsonify({'ok': False, 'error': f'Invalid AF mode: {new_af_mode}'})
+                
+                # Update lens position if provided
+                if 'lens_position' in data:
+                    pos = float(data['lens_position'])
+                    if 0 <= pos <= 32:
+                        self.lens_position = pos
+                        if self.af_mode in ('manual', 'off'):
+                            self._configure_focus()
+                        updated = True
+                    else:
+                        return jsonify({'ok': False, 'error': 'Lens position must be 0-32'})
+                
+                # Save to JSON if anything was updated
+                if updated:
+                    self._save_camera_config_to_json()
+                    self.add_event_log(f"Camera settings updated")
+                    return jsonify({'ok': True})
+                else:
+                    return jsonify({'ok': False, 'error': 'No valid settings provided'})
+                    
+            except Exception as e:
+                print(f"Error updating camera settings: {e}")
+                return jsonify({'ok': False, 'error': str(e)})
     
     def start(self, port=8080):
         """Start the monitoring and web server."""

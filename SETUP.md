@@ -27,13 +27,9 @@ The web status endpoint (`/status`) reports selected camera/AF settings at runti
 | `DB_PASSWORD` | `your_password` | MySQL password |
 | `DB_NAME` | `iwt_db` | Database name |
 | `WEB_PORT` | `8080` | Flask web UI port |
-| `CAMERA_MODE` | `720p60` | Camera preset: `1080p60`, `1080p30`, `720p80`, `720p60`, `custom` |
-| `CAMERA_INDEX` | `0` | Camera index from libcamera camera list |
-| `CAMERA_WIDTH` | `1920` | Camera frame width |
-| `CAMERA_HEIGHT` | `1080` | Camera frame height |
-| `CAMERA_FPS` | `30` | Target FPS (used with `CAMERA_MODE=custom`) |
-| `AF_MODE` | `continuous` | Focus mode: `continuous`, `auto`, `manual`, `off` |
-| `LENS_POSITION` | `5.0` | Manual focus lens position (used with `manual`/`off`) |
+| `CAMERA_INDEX` | `0` | Camera index from libcamera camera list (multi-camera systems) |
+
+**Note:** Camera mode, AF mode, and lens position are now configured via the web dashboard (see "Using the Web Dashboard" section below). These settings persist to `camera_config_[machine_id].json`.
 
 ## Run Examples
 
@@ -48,6 +44,22 @@ Override specific values:
 
 ```bash
 python3 scripts/trimmer_monitor_v2.py --machine-id 15 --port 8090
+```
+
+## Using the Web Dashboard
+
+Once the app is running, access the web dashboard at:
+
+```
+http://<pi-ip>:8080
+```
+
+**Camera Settings Section:**
+- **Camera Mode**: Select from 1080p@60fps, 1080p@30fps, 720p@80fps, 720p@60fps presets
+- **AF Mode**: Continuous, Auto, Manual, or Off (Continuous requires Arducam libcamera)
+- **Lens Position**: Adjust focus manually (0-32 range, visible only when AF Mode = Manual)
+
+Changes apply immediately and persist across app restarts.
 ```
 
 1080p60 (IMX519 native, recommended for high-detail use):

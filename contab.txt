@@ -1,0 +1,1 @@
+@reboot /home/gage-iwt/connectVision/venv/bin/python3 /home/gage-iwt/connectVision/scripts/trimmer_monitor_v2.py

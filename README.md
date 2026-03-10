@@ -27,7 +27,7 @@ What it does:
 - Logs events to `trimmer_events`
 - Logs periodic telemetry to `trimmer_telemetry`
 - Supports ROI calibration and settings save/reload from DB
-- Supports configurable resolution and focus controls (including 1080p + autofocus)
+- **Web dashboard for dynamic camera mode, AF mode, and lens position control** (changes persist across restarts)
 
 Default web UI:
 - `http://<pi-ip>:8080`
@@ -52,7 +52,9 @@ Key `.env` values:
 - `DB_PASSWORD`
 - `DB_NAME`
 - `WEB_PORT`
-- `CAMERA_INDEX`
+- `CAMERA_INDEX` (for multi-camera systems)
+
+**Note:** Camera mode, AF mode, and lens position are now configured via the web dashboard instead of `.env` variables. These settings persist to `camera_config_[machine_id].json` in the scripts directory.
 
 CLI arguments still override `.env` values.
 
@@ -65,17 +67,19 @@ source venv/bin/activate
 python3 scripts/trimmer_monitor_v2.py
 ```
 
-Explicit override example:
+Specify different machine ID:
 
 ```bash
-python3 scripts/trimmer_monitor_v2.py --machine-id 14 --db-password YOUR_PASSWORD --port 8080 --camera-mode 1080p30 --af-mode continuous
+python3 scripts/trimmer_monitor_v2.py --machine-id 15 --db-password YOUR_PASSWORD --port 8080
 ```
 
-720p high-FPS mode:
+Select camera 1 (for multi-camera setup):
 
 ```bash
-python3 scripts/trimmer_monitor_v2.py --camera-mode 720p60 --af-mode continuous
+python3 scripts/trimmer_monitor_v2.py --camera-index 1
 ```
+
+**To adjust camera resolution, AF mode, or lens position:** Use the web dashboard at `http://<pi-ip>:8080` → "Camera Settings" section. Changes apply immediately and persist across restarts.
 
 ## Optional Helper Tools
 
